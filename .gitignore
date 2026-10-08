@@ -1,0 +1,50 @@
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Node & Frontend
+node_modules/
+.npm/
+frontend/node_modules/
+frontend/dist/
+
+# SQLite / Local DBs
+*.db
+*.sqlite
+*.sqlite3
+backend/ripguard.db
+
+# Storage / Uploads / Outputs
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+backend/storage/outputs/*
+!backend/storage/outputs/.gitkeep
+test_assets/outputs/*
+
+# ML Data & Large Checkpoints
+# Model checkpoints (.pt, .pth, .bin, .safetensors) are too large for git
+ml/data/ripvis/
+ml/checkpoints/*.pt
+ml/checkpoints/*.pth
+!ml/checkpoints/.gitkeep
+
+# Environment configs
+.env
+backend/.env
+frontend/.env.local
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+storage/

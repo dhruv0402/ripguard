@@ -1,0 +1,25 @@
+# RipGuard baseline training config.
+# Start here, then iterate — e.g. try different encoders, add temporal
+# context, tune the loss weighting — and record what each change does to
+# the benchmark numbers in benchmark_runs.
+
+data:
+  root_dir: "ml/data/ripvis"
+  image_size: 512
+
+model:
+  architecture: "Unet"          # segmentation_models_pytorch architecture name
+  encoder: "resnet34"
+  encoder_weights: "imagenet"
+
+training:
+  batch_size: 8
+  epochs: 50
+  learning_rate: 0.0001
+  optimizer: "adamw"
+  loss: "dice_bce"               # combined Dice + BCE loss, see train.py
+  early_stopping_patience: 8
+
+output:
+  checkpoint_dir: "ml/checkpoints"
+  checkpoint_name: "ripguard_unet_best.pt"
