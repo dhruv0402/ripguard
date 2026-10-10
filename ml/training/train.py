@@ -12,6 +12,7 @@ attempt's effect on the benchmark numbers via evaluate.py.
 
 import argparse
 import os
+import cv2
 import yaml
 import torch
 import torch.nn as nn
@@ -55,7 +56,15 @@ def train(config_path: str):
         device = torch.device("cpu")
     print(f"Training on {device}")
 
-    train_ds = RipVISDataset(cfg["data"]["root_dir"], split="train")
+    import albumentations as A
+
+    train_transform = A.Compose([
+        A.HorizontalFlip(p=0.5),
+        A.RandomBrightnessContrast(p=0.3),
+        A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.05, rotate_limit=10, p=0.3, border_mode=cv2.BORDER_CONSTANT),
+    ])
+
+    train_ds = RipVISDataset(cfg["data"]["root_dir"], split="train", transform=train_transform)
     val_ds = RipVISDataset(cfg["data"]["root_dir"], split="val")
 
     train_loader = DataLoader(train_ds, batch_size=cfg["training"]["batch_size"], shuffle=True, num_workers=2)
@@ -70,7 +79,8 @@ def train(config_path: str):
     ).to(device)
 
     criterion = DiceBCELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["training"]["learning_rate"])
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["training"]["learning_rate"], weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["training"]["epochs"], eta_min=1e-6)
 
     os.makedirs(cfg["output"]["checkpoint_dir"], exist_ok=True)
     checkpoint_path = os.path.join(cfg["output"]["checkpoint_dir"], cfg["output"]["checkpoint_name"])
@@ -100,7 +110,8 @@ def train(config_path: str):
 
         avg_train_loss = train_loss / max(len(train_loader), 1)
         avg_val_loss = val_loss / max(len(val_loader), 1)
-        print(f"Epoch {epoch+1}: train_loss={avg_train_loss:.4f} val_loss={avg_val_loss:.4f}")
+        scheduler.step()
+        print(f"Epoch {epoch+1}: train_loss={avg_train_loss:.4f} val_loss={avg_val_loss:.4f} lr={scheduler.get_last_lr()[0]:.6f}")
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss

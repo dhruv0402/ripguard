@@ -17,14 +17,12 @@ Model architecture evaluated:
 - **Input resolution:** \(512 \times 512\) px
 - **Evaluation split:** RipVIS held-out test split (106 frames across diverse beach videos with both positive rip currents and negative control sequences)
 
-### Measured Metrics on Held-Out Test Split
+### Measured Metrics across Model Iterations
 
-| Metric | Score | Interpretation |
-|---|---|---|
-| **Mean IoU** | **0.3211** | Intersection over Union across test frames. Reflects the difficulty of precise boundary demarcation on amorphous water bodies. |
-| **Dice / F1 Score** | **0.4973** | Harmonic mean of precision and recall. Strong baseline for single-frame segmentation without temporal attention. |
-| **Precision** | **0.4554** | Fraction of flagged rip pixels that were true rip currents. Reflects false positives caused by breaking whitewater/foam. |
-| **Recall** | **0.5478** | Fraction of actual rip currents captured by the model. Captures more than half of the ground truth current regions. |
+| Benchmark Run / Model Version | Split & Scale | Mean IoU | Dice / F1 | Precision | Recall | Key Insights |
+|---|---|---|---|---|---|---|
+| **v1: `ripguard_unet_resnet34_v1`** | `ripvis_test` (106 frames) | **0.3211** | **0.4973** | **0.4554** | **0.5478** | Baseline single-frame U-Net with ResNet34 and DiceBCE loss. |
+| **v2: `ripguard_unet_v2_augmented_expanded`** | `ripvis_test_expanded` (131 frames) | **0.2185** | **0.3072** | **0.2744** | **0.3490** | Evaluated on broader multi-beach test footage with complex breaking sandbars (`RipVIS-066`), illustrating significant out-of-distribution domain shift. |
 
 ---
 
