@@ -71,6 +71,10 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      removeAuthToken();
+      window.dispatchEvent(new Event('ripguard_auth_error'));
+    }
     const errorBody = await response.json().catch(() => ({ detail: 'Request failed' }));
     throw new Error(errorBody.detail || `HTTP ${response.status}`);
   }

@@ -13,10 +13,20 @@ export const App: React.FC = () => {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   useEffect(() => {
+    const handleAuthError = () => {
+      setToken(null);
+      setCurrentTab('login');
+    };
+
+    window.addEventListener('ripguard_auth_error', handleAuthError);
+    return () => window.removeEventListener('ripguard_auth_error', handleAuthError);
+  }, []);
+
+  useEffect(() => {
     if (!token && currentTab !== 'benchmark') {
       setCurrentTab('login');
     }
-  }, [token]);
+  }, [token, currentTab]);
 
   const handleLoginSuccess = () => {
     setToken(getAuthToken());

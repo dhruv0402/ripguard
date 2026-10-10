@@ -17,16 +17,35 @@ import segmentation_models_pytorch as smp
 
 
 def _load_model(checkpoint_path: str, device: torch.device):
-    model = smp.create_model(arch="Unet", encoder_name="resnet34", encoder_weights=None, in_channels=3, classes=1)
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    state_dict = torch.load(checkpoint_path, map_location=device)
+    # Check if checkpoint expects 5 input channels (motion model) or 3 channels (appearance)
+    first_weight = state_dict.get("encoder.conv1.weight", None)
+    in_channels = first_weight.shape[1] if first_weight is not None else 3
+
+    model = smp.create_model(arch="Unet", encoder_name="resnet34", encoder_weights=None, in_channels=in_channels, classes=1)
+    model.load_state_dict(state_dict)
     model.to(device).eval()
-    return model
+    return model, in_channels
 
 
-def _preprocess_frame(frame: np.ndarray, size: int = 512) -> torch.Tensor:
+def _preprocess_frame(frame: np.ndarray, prev_frame: np.ndarray | None = None, in_channels: int = 3, size: int = 512) -> torch.Tensor:
     resized = cv2.resize(frame, (size, size))
-    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    tensor = torch.from_numpy(rgb.transpose(2, 0, 1)).float() / 255.0
+    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+    if in_channels == 5:
+        if prev_frame is not None:
+            prev_resized = cv2.resize(prev_frame, (size, size))
+            prev_gray = cv2.cvtColor(prev_resized, cv2.COLOR_BGR2GRAY)
+            curr_gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+            flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+            flow = np.clip(flow, -20.0, 20.0) / 20.0
+        else:
+            flow = np.zeros((size, size, 2), dtype=np.float32)
+        combined = np.concatenate([rgb, flow.astype(np.float32)], axis=-1)
+        tensor = torch.from_numpy(combined.transpose(2, 0, 1)).float()
+    else:
+        tensor = torch.from_numpy(rgb.transpose(2, 0, 1)).float()
+
     return tensor.unsqueeze(0)
 
 
@@ -68,7 +87,7 @@ def run_inference_on_video(
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
-    model = _load_model(checkpoint_path, device)
+    model, in_channels = _load_model(checkpoint_path, device)
 
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -82,6 +101,7 @@ def run_inference_on_video(
     risk_timeline = []
     raw_detections = []  # before merging into windows
     frame_idx = 0
+    prev_frame = None
 
     with torch.no_grad():
         while True:
@@ -92,7 +112,7 @@ def run_inference_on_video(
             timestamp_sec = frame_idx / fps
 
             if frame_idx % frame_sample_rate == 0:
-                input_tensor = _preprocess_frame(frame).to(device)
+                input_tensor = _preprocess_frame(frame, prev_frame=prev_frame, in_channels=in_channels).to(device)
                 pred = torch.sigmoid(model(input_tensor))[0, 0].cpu().numpy()
                 confidence = float(pred.max())
 
@@ -108,6 +128,7 @@ def run_inference_on_video(
                 overlay[mask_resized > confidence_threshold_for_detection] = [0, 0, 255]  # red tint, BGR
                 frame = cv2.addWeighted(overlay, 0.4, frame, 0.6, 0)
 
+            prev_frame = frame.copy()
             writer.write(frame)
             frame_idx += 1
 
