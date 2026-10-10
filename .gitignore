@@ -32,10 +32,12 @@ backend/storage/outputs/*
 test_assets/outputs/*
 
 # ML Data & Large Checkpoints
-# Model checkpoints (.pt, .pth, .bin, .safetensors) are too large for git
+# Model checkpoints (.pt, .pth, .bin, .safetensors, .onnx) are too large for git
 ml/data/ripvis/
 ml/checkpoints/*.pt
 ml/checkpoints/*.pth
+ml/checkpoints/*.onnx
+ml/checkpoints/*.onnx.data
 !ml/checkpoints/.gitkeep
 
 # Environment configs
