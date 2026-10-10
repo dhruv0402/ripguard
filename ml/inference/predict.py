@@ -135,6 +135,26 @@ def run_inference_on_video(
     cap.release()
     writer.release()
 
+    # Temporal Confidence Aggregation (TCA): Exponential moving average smoothing
+    # across sampled confidence points to suppress single-frame whitewater transient spikes.
+    smoothed_timeline = []
+    alpha = 0.65  # Weight for current sample vs history
+    ema = None
+    for pt in risk_timeline:
+        c = pt["confidence"]
+        ema = c if ema is None else (alpha * c + (1.0 - alpha) * ema)
+        smoothed_timeline.append({"t": pt["t"], "confidence": round(float(ema), 4)})
+
+    # Filter raw detections with smoothed confidence thresholding to prevent spurious false alarms
+    smoothed_detections = []
+    for raw_det, smooth_pt in zip(raw_detections, smoothed_timeline):
+        if smooth_pt["confidence"] >= confidence_threshold_for_detection:
+            smoothed_detections.append({
+                "t": raw_det["t"],
+                "confidence": smooth_pt["confidence"],
+                "region": raw_det["region"]
+            })
+
     # Re-encode to browser-compatible H.264 (avc1) if ffmpeg is available
     h264_output_path = output_path.replace("_annotated.mp4", "_h264.mp4")
     try:
@@ -157,11 +177,11 @@ def run_inference_on_video(
         # Fall back gracefully to original opencv output
         pass
 
-    detections = _merge_into_windows(raw_detections, gap_tolerance_sec=1.0)
+    detections = _merge_into_windows(smoothed_detections, gap_tolerance_sec=1.0)
 
     return {
         "annotated_video_path": output_path,
-        "risk_timeline": risk_timeline,
+        "risk_timeline": smoothed_timeline,
         "detections": detections,
     }
 

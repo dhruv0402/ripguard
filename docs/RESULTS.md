@@ -23,6 +23,7 @@ Model architecture evaluated:
 |---|---|---|---|---|---|---|
 | **v1: `ripguard_unet_resnet34_v1`** | `ripvis_test` (106 frames) | **0.3211** | **0.4973** | **0.4554** | **0.5478** | Baseline single-frame U-Net with ResNet34 and DiceBCE loss. |
 | **v2: `ripguard_unet_v2_augmented_expanded`** | `ripvis_test_expanded` (131 frames) | **0.2185** | **0.3072** | **0.2744** | **0.3490** | Evaluated on broader multi-beach test footage with complex breaking sandbars (`RipVIS-066`), illustrating significant out-of-distribution domain shift. |
+| **v3: `ripguard_unet_v3_motion_farneback`** | `ripvis_test_expanded` (131 frames) | **0.1872** | **0.2851** | **0.2268** | **0.3838** | 5-channel spatio-temporal input `[RGB + vx + vy]` using dense Farnebäck optical flow. Flow channels boost seaward motion recall ($0.3838$ vs $0.3490$), but boundary noise from turbulent foam spray dampens single-pixel IoU precision. |
 
 ---
 
