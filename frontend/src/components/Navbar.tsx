@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, ShieldCheck, Activity, BarChart2, PlusCircle, LogOut } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, Activity, BarChart2, PlusCircle, LogOut, Radio } from 'lucide-react';
 
 interface NavbarProps {
   currentTab: string;
