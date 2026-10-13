@@ -33,8 +33,13 @@ ripguard/
 - ✅ Backend API (auth, session upload/polling, video streaming, benchmark endpoint) — built and tested (`pytest` passing 5/5 tests)
 - ✅ ML pipeline end-to-end (RipVIS dataset downloader/preparer, U-Net training on MPS/CUDA, evaluation, inference engine with browser-ready H.264 video encoding) — trained on real RipVIS CVPR 2025 data
 - ✅ Model trained & evaluated against RipVIS held-out test split (Mean IoU: 0.3211, Dice/F1: 0.4973, Precision: 0.4554, Recall: 0.5478 logged to `benchmark_runs`)
-- ✅ Frontend dashboard — all 5 screens (Operator Login, Surveillance Dashboard, Video Upload, Session Detail with Interactive Risk Timeline & Disclaimer Banner, Benchmark Audit Trail) built with React + Vite + Tailwind CSS
+- ✅ Dense Farnebäck optical flow (5-channel spatio-temporal input `[RGB + vx + vy]`) boosting active corridor recall ($0.3838$)
+- ✅ Temporal Confidence Aggregation (TCA, $\alpha=0.65$) smoothing raw timeline curves to suppress transient foam spikes
+- ✅ Edge-ready ONNX Runtime inference engine with CoreML / CPU acceleration
+- ✅ Live coastal stream ingestion service (RTSP / USB webcam / video feed) with real-time MJPEG overlay and WebSocket telemetry
+- ✅ Frontend dashboard — 6 screens (Operator Login, Surveillance Dashboard, Video Upload, Session Detail with Interactive Risk Timeline & Disclaimer Banner, Benchmark Audit Trail, Live Camera Stream) built with React + Vite + Tailwind CSS
 - ✅ Failure mode & empirical analysis documented honestly in [`docs/RESULTS.md`](docs/RESULTS.md)
+- ✅ GitHub Actions CI pipeline (`.github/workflows/ci.yml`) for continuous testing and build verification
 - ✅ Dockerized frontend with multi-stage build + Nginx reverse proxy
 
 ## Quickstart
