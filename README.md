@@ -9,6 +9,47 @@ A full-stack system that analyzes beach video to flag likely rip current regions
 - [`docs/TRD.md`](docs/TRD.md) — Technical Requirements Document: architecture, stack, ML pipeline design
 - [`docs/APP_FLOW.md`](docs/APP_FLOW.md) — user flow, screens, sequence diagram
 - [`docs/SCHEMA.md`](docs/SCHEMA.md) — database schema / ERD
+- [`docs/RESULTS.md`](docs/RESULTS.md) — empirical CVPR 2025 RipVIS benchmark audit trail & failure mode analysis
+- [`docs/INTERVIEW_GUIDE.md`](docs/INTERVIEW_GUIDE.md) — AI engineering interview guide & architecture trade-offs
+
+## System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Ingestion ["Video & Stream Ingestion"]
+        A["Drone / Beach RTSP Camera"]
+        B["Recorded Video Upload (MP4)"]
+    end
+
+    subgraph Processing ["Edge AI & Vision Pipeline"]
+        C["Farnebäck Optical Flow (5-Channel RGB + vx + vy)"]
+        D["ONNX Runtime Engine (CoreML / CPU EP)"]
+        E["Temporal Confidence Aggregation (TCA α=0.65)"]
+    end
+
+    subgraph Dispatch ["Alerts & Storage"]
+        F["Automated Lifeguard Dispatcher (Sustained >= 4s)"]
+        G["Slack / Twilio Webhook"]
+        H["PostgreSQL / SQLite Database"]
+    end
+
+    subgraph Presentation ["Decision-Support Frontend"]
+        I["React 19 Dashboard (Tailwind CSS)"]
+        J["Live Camera Screen (MJPEG + WebSocket)"]
+        K["Audit Screen (Public Benchmark Runs)"]
+    end
+
+    A --> C
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    E --> H
+    E --> I
+    A --> J
+    H --> K
+```
 
 ## Repo structure
 ```
