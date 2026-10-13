@@ -40,20 +40,19 @@ async def get_stream_status():
     return default_stream_manager.latest_meta
 
 
-@router.websocket("/ws")
-async def stream_telemetry_ws(websocket: WebSocket):
-    """Websocket connection for real-time telemetry streaming (sub-50ms latency)."""
-    await websocket.accept()
-    await default_stream_manager.start()
+@router.get("/alerts")
+async def get_alerts_history():
+    """Returns the chronological audit log of triggered lifeguard alerts."""
+    from app.services.alert_service import default_alert_dispatcher
+    return {
+        "count": len(default_alert_dispatcher.dispatch_history),
+        "alerts": default_alert_dispatcher.dispatch_history[::-1],  # newest first
+    }
 
-    queue = asyncio.Queue(maxsize=10)
-    default_stream_manager.subscribers.add(queue)
 
-    try:
-        while True:
-            meta = await queue.get()
-            await websocket.send_json(meta)
-    except (WebSocketDisconnect, asyncio.CancelledError):
-        pass
-    finally:
-        default_stream_manager.subscribers.discard(queue)
+@router.post("/alerts/webhook")
+async def register_alert_webhook(url: str = Query(..., description="Webhook endpoint URL")):
+    """Registers an external webhook (e.g., Slack, Twilio endpoint) to receive real-time alerts."""
+    from app.services.alert_service import default_alert_dispatcher
+    default_alert_dispatcher.register_webhook(url)
+    return {"status": "registered", "url": url}

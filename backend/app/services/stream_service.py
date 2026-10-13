@@ -17,6 +17,7 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "ml"))
 from inference.predict import _load_model, _preprocess_frame, _mask_to_region  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
+from app.services.alert_service import default_alert_dispatcher  # noqa: E402
 
 settings = get_settings()
 
@@ -129,6 +130,11 @@ class LiveStreamManager:
                     "fps": current_fps,
                     "timestamp": round(now, 2),
                 }
+
+                # Evaluate for sustained high-risk alert dispatch
+                dispatched_alert = default_alert_dispatcher.process_telemetry(self.latest_meta)
+                if dispatched_alert:
+                    self.latest_meta["latest_alert"] = dispatched_alert
 
                 # Broadcast metadata to subscribers
                 dead_subs = set()

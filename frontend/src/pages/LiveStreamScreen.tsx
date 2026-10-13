@@ -10,6 +10,16 @@ interface Telemetry {
   timestamp: number;
 }
 
+interface AlertItem {
+  id: string;
+  type: string;
+  priority: string;
+  confidence: number;
+  sustained_duration_sec: number;
+  timestamp: string;
+  message: string;
+}
+
 export const LiveStreamScreen: React.FC = () => {
   const [streamSource, setStreamSource] = useState<string>('test_assets/beach_ripvis_072.mp4');
   const [activeUrl, setActiveUrl] = useState<string>('/api/stream/feed?source=test_assets/beach_ripvis_072.mp4');
@@ -20,15 +30,24 @@ export const LiveStreamScreen: React.FC = () => {
     fps: 0,
     timestamp: Date.now() / 1000,
   });
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [webhookUrl, setWebhookUrl] = useState<string>('');
+  const [webhookSuccess, setWebhookSuccess] = useState<boolean>(false);
 
   useEffect(() => {
-    // Poll telemetry status every 500ms
+    // Poll telemetry status and alerts every 500ms
     const interval = setInterval(async () => {
       try {
         const res = await fetch('/api/stream/status');
         if (res.ok) {
           const data = await res.json();
           setTelemetry(data);
+        }
+
+        const alertRes = await fetch('/api/stream/alerts');
+        if (alertRes.ok) {
+          const alertData = await alertRes.json();
+          setAlerts(alertData.alerts || []);
         }
       } catch {
         // stream might be starting
@@ -37,6 +56,22 @@ export const LiveStreamScreen: React.FC = () => {
 
     return () => clearInterval(interval);
   }, []);
+
+  const handleRegisterWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!webhookUrl) return;
+    try {
+      const res = await fetch(`/api/stream/alerts/webhook?url=${encodeURIComponent(webhookUrl)}`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        setWebhookSuccess(true);
+        setTimeout(() => setWebhookSuccess(false), 3000);
+      }
+    } catch {
+      // error handling
+    }
+  };
 
   const handleApplySource = (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,6 +204,57 @@ export const LiveStreamScreen: React.FC = () => {
                 <span className="text-emerald-400 font-medium">TCA (α=0.65) Active</span>
               </div>
             </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+            <h2 className="text-sm font-semibold text-white tracking-wide uppercase flex items-center justify-between">
+              <span>Lifeguard Alerts ({alerts.length})</span>
+              <span className="text-xs font-mono text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                Auto-Dispatch
+              </span>
+            </h2>
+
+            {alerts.length === 0 ? (
+              <p className="text-xs text-slate-500 italic">No sustained rip events triggered yet.</p>
+            ) : (
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {alerts.map((alt) => (
+                  <div
+                    key={alt.id}
+                    className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-500/30 text-xs space-y-1"
+                  >
+                    <div className="flex justify-between items-center text-rose-400 font-semibold">
+                      <span>{alt.priority} ALERT</span>
+                      <span className="text-slate-400 font-mono text-[10px]">{alt.timestamp}</span>
+                    </div>
+                    <p className="text-slate-300 text-[11px] leading-relaxed">{alt.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Webhook Dispatch Config */}
+            <form onSubmit={handleRegisterWebhook} className="pt-2 border-t border-slate-800 space-y-2">
+              <span className="text-[11px] text-slate-400 font-medium block">Dispatch Webhook (Slack / Twilio)</span>
+              <div className="flex space-x-1.5">
+                <input
+                  type="url"
+                  placeholder="https://hooks.slack.com/services/..."
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 text-slate-300 text-xs rounded px-2 py-1 flex-1 focus:outline-none focus:border-sky-500"
+                />
+                <button
+                  type="submit"
+                  className="bg-sky-500 hover:bg-sky-600 text-white text-xs px-2.5 py-1 rounded font-medium"
+                >
+                  Save
+                </button>
+              </div>
+              {webhookSuccess && (
+                <span className="text-[11px] text-emerald-400 block font-medium">✓ Webhook registered</span>
+              )}
+            </form>
           </div>
 
           <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4 text-xs text-slate-400 space-y-2">
