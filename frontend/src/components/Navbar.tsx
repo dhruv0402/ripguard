@@ -51,6 +51,17 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, isLog
                 New Analysis
               </button>
               <button
+                onClick={() => setCurrentTab('stream')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center space-x-1 transition-colors ${
+                  currentTab === 'stream'
+                    ? 'bg-sky-500/20 text-sky-400 border border-sky-500/30'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Radio className="w-4 h-4 mr-1 text-rose-400 animate-pulse" />
+                Live Camera
+              </button>
+              <button
                 onClick={() => setCurrentTab('benchmark')}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center space-x-1 transition-colors ${
                   currentTab === 'benchmark'

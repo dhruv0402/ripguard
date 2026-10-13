@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import get_settings
 from app.core.database import init_db
-from app.api import auth, sessions, benchmark
+from app.api import auth, sessions, benchmark, stream
 
 settings = get_settings()
 
@@ -28,6 +28,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(benchmark.router)
+app.include_router(stream.router)
 
 
 @app.get("/health")

@@ -14,18 +14,66 @@ import cv2
 import numpy as np
 import torch
 import segmentation_models_pytorch as smp
+try:
+    import onnxruntime as ort
+except ImportError:
+    ort = None
+
+
+class InferenceEngine:
+    """Unified wrapper supporting both PyTorch (.pt) and ONNX Runtime (.onnx) backends."""
+
+    def __init__(self, checkpoint_path: str, device: torch.device):
+        self.checkpoint_path = checkpoint_path
+        self.is_onnx = checkpoint_path.endswith(".onnx")
+        self.device = device
+
+        if self.is_onnx:
+            if ort is None:
+                raise ImportError("onnxruntime is not installed. Run 'pip install onnxruntime' to use ONNX models.")
+            # Set up ONNX Runtime Session
+            providers = ["CPUExecutionProvider"]
+            if "CoreMLExecutionProvider" in ort.get_available_providers():
+                providers.insert(0, "CoreMLExecutionProvider")
+            self.ort_session = ort.InferenceSession(checkpoint_path, providers=providers)
+            input_info = self.ort_session.get_inputs()[0]
+            self.input_name = input_info.name
+            self.in_channels = input_info.shape[1] if isinstance(input_info.shape[1], int) else 3
+            self.output_name = self.ort_session.get_outputs()[0].name
+            self.model = None
+        else:
+            state_dict = torch.load(checkpoint_path, map_location=device)
+            first_weight = state_dict.get("encoder.conv1.weight", None)
+            self.in_channels = first_weight.shape[1] if first_weight is not None else 3
+            self.model = smp.create_model(
+                arch="Unet",
+                encoder_name="resnet34",
+                encoder_weights=None,
+                in_channels=self.in_channels,
+                classes=1
+            )
+            self.model.load_state_dict(state_dict)
+            self.model.to(device).eval()
+            self.ort_session = None
+
+    def predict_mask(self, input_tensor: torch.Tensor) -> np.ndarray:
+        """Takes [1, C, H, W] torch tensor, returns [H, W] float probability mask in [0, 1]."""
+        if self.is_onnx:
+            numpy_in = input_tensor.cpu().numpy().astype(np.float32)
+            logits = self.ort_session.run([self.output_name], {self.input_name: numpy_in})[0]
+            # Sigmoid activation: 1 / (1 + exp(-x))
+            prob = 1.0 / (1.0 + np.exp(-logits[0, 0]))
+            return prob
+        else:
+            with torch.no_grad():
+                logits = self.model(input_tensor.to(self.device))
+                prob = torch.sigmoid(logits)[0, 0].cpu().numpy()
+                return prob
 
 
 def _load_model(checkpoint_path: str, device: torch.device):
-    state_dict = torch.load(checkpoint_path, map_location=device)
-    # Check if checkpoint expects 5 input channels (motion model) or 3 channels (appearance)
-    first_weight = state_dict.get("encoder.conv1.weight", None)
-    in_channels = first_weight.shape[1] if first_weight is not None else 3
-
-    model = smp.create_model(arch="Unet", encoder_name="resnet34", encoder_weights=None, in_channels=in_channels, classes=1)
-    model.load_state_dict(state_dict)
-    model.to(device).eval()
-    return model, in_channels
+    engine = InferenceEngine(checkpoint_path, device)
+    return engine, engine.in_channels
 
 
 def _preprocess_frame(frame: np.ndarray, prev_frame: np.ndarray | None = None, in_channels: int = 3, size: int = 512) -> torch.Tensor:
@@ -113,7 +161,7 @@ def run_inference_on_video(
 
             if frame_idx % frame_sample_rate == 0:
                 input_tensor = _preprocess_frame(frame, prev_frame=prev_frame, in_channels=in_channels).to(device)
-                pred = torch.sigmoid(model(input_tensor))[0, 0].cpu().numpy()
+                pred = model.predict_mask(input_tensor)
                 confidence = float(pred.max())
 
                 risk_timeline.append({"t": round(timestamp_sec, 2), "confidence": round(confidence, 4)})

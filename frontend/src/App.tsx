@@ -5,6 +5,7 @@ import { DashboardScreen } from './pages/DashboardScreen';
 import { UploadScreen } from './pages/UploadScreen';
 import { SessionDetailScreen } from './pages/SessionDetailScreen';
 import { BenchmarkScreen } from './pages/BenchmarkScreen';
+import { LiveStreamScreen } from './pages/LiveStreamScreen';
 import { getAuthToken, removeAuthToken } from './api';
 
 export const App: React.FC = () => {
@@ -83,6 +84,8 @@ export const App: React.FC = () => {
         )}
 
         {currentTab === 'benchmark' && <BenchmarkScreen />}
+
+        {currentTab === 'stream' && <LiveStreamScreen />}
       </main>
 
       <footer className="border-t border-slate-900 bg-slate-950/80 py-6 text-center text-xs text-slate-600">
