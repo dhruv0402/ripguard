@@ -191,20 +191,108 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
             </div>
           </div>
 
-          {/* Video Player Section */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
-            <div className="relative bg-black aspect-video flex items-center justify-center">
-              <video
-                ref={videoRef}
-                src={getVideoUrl(session.id)}
-                controls
-                onTimeUpdate={handleTimeUpdate}
-                onLoadedMetadata={handleLoadedMetadata}
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                className="w-full h-full object-contain"
-              />
-            </div>
+            {/* Video Player Section with Real-Time HUD Overlay */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl relative">
+              <div className="relative bg-black aspect-video flex items-center justify-center overflow-hidden">
+                <video
+                  ref={videoRef}
+                  src={getVideoUrl(session.id)}
+                  controls
+                  onTimeUpdate={handleTimeUpdate}
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  className="w-full h-full object-contain"
+                />
+
+                {/* Real-time Dynamic Detection HUD Overlay */}
+                {(() => {
+                  // Find nearest detection window or timeline point matching current video time
+                  const activeDetection = detections.find(
+                    (d) => currentTime >= d.start_timestamp_sec && currentTime <= d.end_timestamp_sec
+                  );
+                  const nearestPoint = timeline.reduce((prev, curr) => {
+                    return Math.abs(curr.t - currentTime) < Math.abs(prev.t - currentTime) ? curr : prev;
+                  }, timeline[0] || { t: 0, confidence: 0 });
+
+                  const activeConfidence = activeDetection
+                    ? activeDetection.confidence
+                    : nearestPoint
+                    ? nearestPoint.confidence
+                    : 0;
+
+                  const isHigh = activeConfidence >= 0.7;
+                  const isMed = activeConfidence >= 0.4 && activeConfidence < 0.7;
+
+                  const region = activeDetection?.bounding_region;
+
+                  return (
+                    <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between">
+                      {/* Top HUD Banner */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2 bg-slate-950/85 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800 text-xs">
+                          <span className="flex h-2 w-2 relative">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+                          </span>
+                          <span className="font-mono text-slate-300 uppercase tracking-wider font-semibold">
+                            SURVEILLANCE HUD
+                          </span>
+                          <span className="text-slate-600">|</span>
+                          <span className="text-sky-400 font-mono">{(currentTime).toFixed(1)}s</span>
+                        </div>
+
+                        {/* Real-time Live Risk Badge */}
+                        <div className="flex items-center space-x-2 bg-slate-950/85 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800 text-xs">
+                          <span className="text-slate-400">Target Risk:</span>
+                          <span
+                            className={`font-bold px-2 py-0.5 rounded ${
+                              isHigh
+                                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse'
+                                : isMed
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                                : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                            }`}
+                          >
+                            {isHigh ? 'HIGH (RIP ACTIVE)' : isMed ? 'MEDIUM' : 'LOW (SURF)'}
+                          </span>
+                          <span className="text-slate-300 font-mono font-semibold">
+                            {(activeConfidence * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bounding Box Overlay if target detected at current time */}
+                      {region && (
+                        <div
+                          className="absolute border-2 border-dashed border-rose-500 rounded bg-rose-500/15 backdrop-blur-[1px] transition-all duration-200 shadow-[0_0_15px_rgba(244,63,94,0.4)]"
+                          style={{
+                            left: `${Math.max(5, Math.min(90, region.x * 100))}%`,
+                            top: `${Math.max(5, Math.min(90, region.y * 100))}%`,
+                            width: `${Math.max(15, Math.min(80, region.w * 100))}%`,
+                            height: `${Math.max(15, Math.min(80, region.h * 100))}%`,
+                          }}
+                        >
+                          <div className="absolute -top-6 left-0 bg-rose-600 text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow">
+                            RIP CHANNEL [{(activeConfidence * 100).toFixed(1)}%]
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Bottom Live Water Scanning Reticle */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 bg-slate-950/70 backdrop-blur px-3 py-1 rounded border border-slate-800/80">
+                        <div className="flex items-center space-x-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          <span>Spatiotemporal Farnebäck Optical Flow Tracker Active</span>
+                        </div>
+                        <div className="font-mono">
+                          Confidence: <strong className="text-sky-400">{(activeConfidence * 100).toFixed(1)}%</strong>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
 
             {/* Interactive Timeline Strip */}
             <div className="p-6 border-t border-slate-800 space-y-4">
