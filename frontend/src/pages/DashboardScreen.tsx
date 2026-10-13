@@ -17,9 +17,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onSelectSessio
     try {
       setLoading(true);
       const data = await apiFetch('/api/sessions');
-      setSessions(data);
+      if (Array.isArray(data)) {
+        setSessions(data);
+      } else {
+        setSessions([]);
+      }
     } catch (err) {
       console.error('Failed to load sessions', err);
+      setSessions([]);
     } finally {
       setLoading(false);
     }
@@ -29,13 +34,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ onSelectSessio
     fetchSessions();
   }, []);
 
-  const filteredSessions = sessions.filter((s) => {
+  const safeSessions = Array.isArray(sessions) ? sessions : [];
+
+  const filteredSessions = safeSessions.filter((s) => {
     if (riskFilter !== 'all' && s.overall_risk_level !== riskFilter) {
       return false;
     }
     if (searchQuery.trim() !== '') {
       const q = searchQuery.toLowerCase();
-      const matchFile = s.filename.toLowerCase().includes(q);
+      const matchFile = (s.filename || '').toLowerCase().includes(q);
       const matchLoc = (s.location_label || '').toLowerCase().includes(q);
       return matchFile || matchLoc;
     }
