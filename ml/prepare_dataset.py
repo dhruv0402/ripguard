@@ -29,15 +29,20 @@ DEFAULT_SPLIT_VIDEOS = {
         "RipVIS-068", "RipVIS-122", "RipVIS-010", "RipVIS-092", "RipVIS-052",
         "RipVIS-049", "RipVIS-051", "RipVIS-050", "RipVIS-061", "RipVIS-071",
         "RipVIS-080", "RipVIS-116", "RipVIS-064", "RipVIS-094", "RipVIS-NR-003",
-        "RipVIS-084", "RipVIS-NR-011", "RipVIS-NR-010"
+        "RipVIS-084", "RipVIS-NR-011", "RipVIS-NR-010", "RipVIS-NR-001",
+        "RipVIS-NR-002", "RipVIS-NR-005", "RipVIS-NR-006", "RipVIS-NR-007",
+        "RipVIS-NR-008", "RipVIS-NR-009", "RipVIS-076", "RipVIS-077", "RipVIS-078",
+        "RipVIS-079", "RipVIS-081", "RipVIS-083", "RipVIS-085", "RipVIS-086"
     ],
     "val": [
         "RipVIS-072", "RipVIS-121", "RipVIS-067", "RipVIS-007", "RipVIS-059",
-        "RipVIS-012", "RipVIS-137", "RipVIS-NR-019"
+        "RipVIS-012", "RipVIS-137", "RipVIS-NR-019", "RipVIS-NR-013",
+        "RipVIS-NR-014", "RipVIS-NR-015", "RipVIS-013", "RipVIS-060"
     ],
     "test": [
         "RipVIS-014", "RipVIS-053", "RipVIS-024", "RipVIS-NR-004", "RipVIS-015",
-        "RipVIS-066"
+        "RipVIS-066", "RipVIS-NR-016", "RipVIS-NR-017", "RipVIS-NR-018",
+        "RipVIS-025", "RipVIS-055"
     ]
 }
 

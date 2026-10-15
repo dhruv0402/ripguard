@@ -217,11 +217,62 @@ def run_inference_on_video(
                     region = _mask_to_region(pred, threshold=confidence_threshold_for_detection)
                     raw_detections.append({"t": timestamp_sec, "confidence": confidence, "region": region})
 
-                # Overlay: resize mask back to frame size, tint flagged regions
+                # Calculate optical flow vectors for visual sea current motion tracking
+                flow_vis = None
+                if prev_frame is not None:
+                    prev_gray = cv2.cvtColor(cv2.resize(prev_frame, (width, height)), cv2.COLOR_BGR2GRAY)
+                    curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    flow_vis = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+
+                # Overlay 1: Heatmap of rip current confidence (Red/Orange corridor)
                 mask_resized = cv2.resize(pred, (width, height))
                 overlay = frame.copy()
-                overlay[mask_resized > confidence_threshold_for_detection] = [0, 0, 255]  # red tint, BGR
-                frame = cv2.addWeighted(overlay, 0.4, frame, 0.6, 0)
+                
+                # Highlight rip corridor with vivid red/crimson glow
+                active_mask = mask_resized > confidence_threshold_for_detection
+                overlay[active_mask] = [0, 0, 230]  # Red overlay
+                frame = cv2.addWeighted(overlay, 0.45, frame, 0.55, 0)
+
+                # Overlay 2: Contour boundary outline around active rip current corridor
+                if np.any(active_mask):
+                    contours, _ = cv2.findContours(active_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    cv2.drawContours(frame, contours, -1, (0, 255, 255), 2)  # Bright yellow contour edge
+
+                # Overlay 3: Real-time Sea Current Motion Vectors (Arrow grid showing ocean flow)
+                if flow_vis is not None:
+                    step = 32  # Grid spacing for vector arrows
+                    for y in range(step // 2, height, step):
+                        for x in range(step // 2, width, step):
+                            fx, fy = flow_vis[y, x]
+                            mag = np.hypot(fx, fy)
+                            if mag > 1.2:  # Only draw vectors with noticeable motion
+                                end_x = int(np.clip(x + fx * 2.5, 0, width - 1))
+                                end_y = int(np.clip(y + fy * 2.5, 0, height - 1))
+                                # In rip current regions, draw arrows in bright red/yellow; in surrounding water, draw in cyan
+                                color = (0, 0, 255) if active_mask[y, x] else (255, 200, 0)
+                                cv2.arrowedLine(frame, (x, y), (end_x, end_y), color, 1, tipLength=0.35)
+
+                # Overlay 4: Top-left telemetry watermark on video
+                cv2.putText(
+                    frame,
+                    f"RIPGUARD TRACKER | CONF: {confidence * 100:.1f}% | FLOW ACTIVE",
+                    (20, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 0, 0),
+                    3,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    frame,
+                    f"RIPGUARD TRACKER | CONF: {confidence * 100:.1f}% | FLOW ACTIVE",
+                    (20, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 255) if confidence >= 0.5 else (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
 
             prev_frame = frame.copy()
             writer.write(frame)
