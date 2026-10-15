@@ -56,8 +56,8 @@ def train_v4(epochs=20, batch_size=8, lr=1e-4, arch="DeepLabV3Plus", encoder="re
 
     print(f"Loaded {len(train_ds)} training pairs, {len(val_ds)} validation pairs.")
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=2, drop_last=True)
 
     try:
         model = smp.create_model(
