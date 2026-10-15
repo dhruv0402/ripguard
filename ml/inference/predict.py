@@ -114,6 +114,39 @@ def _mask_to_region(mask: np.ndarray, threshold: float = 0.5) -> dict | None:
     }
 
 
+def _is_coastal_environment(first_few_frames: list[np.ndarray]) -> tuple[bool, str]:
+    """
+    Validates whether incoming video frames exhibit coastal characteristics
+    (water, foam, sand, sky color distribution and ocean surface dynamics).
+    Prevents out-of-distribution (OOD) false alarms on irrelevant indoor/street footage.
+    """
+    if not first_few_frames:
+        return False, "Unable to read video frames"
+
+    water_sand_foam_ratios = []
+    for frame in first_few_frames:
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+
+        # 1. Water spectrum: blue/cyan/green hues (H between 35 and 130)
+        water_mask = (h >= 35) & (h <= 130) & (s >= 20) & (v >= 20)
+        # 2. Whitewater foam / Breaking surf: high brightness, low saturation
+        foam_mask = (v >= 200) & (s <= 60)
+        # 3. Sand / beach tones: yellow-orange hues (H between 15 and 35) with moderate saturation
+        sand_mask = (h >= 12) & (h <= 35) & (s >= 30) & (v >= 60)
+
+        coastal_ratio = np.mean(water_mask | foam_mask | sand_mask)
+        water_sand_foam_ratios.append(coastal_ratio)
+
+    avg_coastal_ratio = float(np.mean(water_sand_foam_ratios))
+
+    # Coastal surf environments typically contain >= 20% water, sand, or foam
+    if avg_coastal_ratio < 0.18:
+        return False, f"Non-coastal environment detected (coastal texture ratio: {avg_coastal_ratio:.1%}). Please upload coastal beach or surf surveillance footage."
+
+    return True, "Coastal environment verified"
+
+
 def run_inference_on_video(
     video_path: str,
     checkpoint_path: str,
@@ -129,6 +162,25 @@ def run_inference_on_video(
             "detections": [{"start": float, "end": float, "confidence": float, "region": dict}, ...]
         }
     """
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # Read initial 15 frames for coastal domain validation
+    sample_frames = []
+    for _ in range(15):
+        ret, f = cap.read()
+        if not ret:
+            break
+        sample_frames.append(f)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    is_valid_coastal, reason = _is_coastal_environment(sample_frames)
+    if not is_valid_coastal:
+        cap.release()
+        raise ValueError(f"Out-of-Distribution Input: {reason}")
+
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -136,11 +188,6 @@ def run_inference_on_video(
     else:
         device = torch.device("cpu")
     model, in_channels = _load_model(checkpoint_path, device)
-
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, f"{uuid.uuid4()}_annotated.mp4")
