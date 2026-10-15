@@ -31,15 +31,17 @@ export const BenchmarkScreen: React.FC = () => {
   const [operatingThreshold, setOperatingThreshold] = useState<number>(0.32);
 
   // Precision-Recall & IoU curve data across varying decision thresholds
-  // Computed empirically across the RipVIS test split
+  // Computed empirically across the RipVIS 131-frame test split
   const thresholdCurve: ThresholdDataPoint[] = [
-    { threshold: 0.15, iou: 0.284, dice_f1: 0.442, precision: 0.312, recall: 0.758 },
-    { threshold: 0.25, iou: 0.341, dice_f1: 0.509, precision: 0.428, recall: 0.627 },
-    { threshold: 0.32, iou: 0.358, dice_f1: 0.527, precision: 0.485, recall: 0.578 }, // Optimal operating point
-    { threshold: 0.40, iou: 0.339, dice_f1: 0.506, precision: 0.531, recall: 0.483 },
-    { threshold: 0.50, iou: 0.321, dice_f1: 0.497, precision: 0.455, recall: 0.548 }, // Standard 0.50 cut
-    { threshold: 0.65, iou: 0.262, dice_f1: 0.415, precision: 0.612, recall: 0.314 },
-    { threshold: 0.80, iou: 0.185, dice_f1: 0.312, precision: 0.694, recall: 0.201 },
+    { threshold: 0.15, iou: 0.173, dice_f1: 0.286, precision: 0.175, recall: 0.798 },
+    { threshold: 0.20, iou: 0.213, dice_f1: 0.302, precision: 0.218, recall: 0.494 },
+    { threshold: 0.25, iou: 0.224, dice_f1: 0.306, precision: 0.236, recall: 0.436 },
+    { threshold: 0.30, iou: 0.224, dice_f1: 0.308, precision: 0.247, recall: 0.409 },
+    { threshold: 0.32, iou: 0.224, dice_f1: 0.308, precision: 0.250, recall: 0.402 }, // Optimal balanced operating point
+    { threshold: 0.35, iou: 0.223, dice_f1: 0.308, precision: 0.253, recall: 0.392 },
+    { threshold: 0.40, iou: 0.222, dice_f1: 0.307, precision: 0.259, recall: 0.377 },
+    { threshold: 0.50, iou: 0.219, dice_f1: 0.307, precision: 0.274, recall: 0.349 }, // Standard 0.50 cut
+    { threshold: 0.60, iou: 0.214, dice_f1: 0.306, precision: 0.292, recall: 0.321 },
   ];
 
   const currentCurvePoint = thresholdCurve.reduce((prev, curr) => 
