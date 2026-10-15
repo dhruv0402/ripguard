@@ -23,25 +23,38 @@ from tqdm import tqdm
 from dataset import RipVISDataset
 
 
-class DiceBCELoss(nn.Module):
-    """Standard combined loss for segmentation with class imbalance —
-    rip current regions are typically a small fraction of each frame,
-    so BCE alone tends to collapse toward predicting "nothing" everywhere."""
+class FocalTverskyLoss(nn.Module):
+    """
+    Focal Tversky Loss specifically designed for small-target segmentation
+    with severe class imbalance (rip currents occupy <10% of coastal frames).
+    
+    alpha: Weight for False Positives (penalizes whitewater false alarms).
+    beta: Weight for False Negatives (penalizes missing active rip current channels).
+    gamma: Focal exponent (focuses gradient updates on hard, ambiguous surf boundaries).
+    """
 
-    def __init__(self, bce_weight: float = 0.5):
+    def __init__(self, alpha: float = 0.3, beta: float = 0.7, gamma: float = 1.33, smooth: float = 1.0):
         super().__init__()
-        self.bce = nn.BCEWithLogitsLoss()
-        self.bce_weight = bce_weight
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
+        self.smooth = smooth
 
     def forward(self, pred, target):
-        bce_loss = self.bce(pred, target)
-
         pred_sigmoid = torch.sigmoid(pred)
-        smooth = 1.0
-        intersection = (pred_sigmoid * target).sum()
-        dice_loss = 1 - (2.0 * intersection + smooth) / (pred_sigmoid.sum() + target.sum() + smooth)
+        
+        # Flatten tensors
+        p = pred_sigmoid.view(-1)
+        t = target.view(-1)
 
-        return self.bce_weight * bce_loss + (1 - self.bce_weight) * dice_loss
+        # True Positives, False Positives, False Negatives
+        tp = (p * t).sum()
+        fp = ((1 - t) * p).sum()
+        fn = (t * (1 - p)).sum()
+
+        tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
+        focal_tversky = torch.pow((1.0 - tversky), self.gamma)
+        return focal_tversky
 
 
 def train(config_path: str):
@@ -78,7 +91,7 @@ def train(config_path: str):
         classes=1,
     ).to(device)
 
-    criterion = DiceBCELoss()
+    criterion = FocalTverskyLoss(alpha=0.3, beta=0.7, gamma=1.33)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["training"]["learning_rate"], weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["training"]["epochs"], eta_min=1e-6)
 
