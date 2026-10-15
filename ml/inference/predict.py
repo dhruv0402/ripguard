@@ -116,33 +116,44 @@ def _mask_to_region(mask: np.ndarray, threshold: float = 0.5) -> dict | None:
 
 def _is_coastal_environment(first_few_frames: list[np.ndarray]) -> tuple[bool, str]:
     """
-    Validates whether incoming video frames exhibit coastal characteristics
-    (water, foam, sand, sky color distribution and ocean surface dynamics).
-    Prevents out-of-distribution (OOD) false alarms on irrelevant indoor/street footage.
+    Validates whether incoming video frames exhibit real coastal characteristics:
+    1. Fluid Surface Wave Dynamics: Ocean waves have high temporal pixel variance across frames,
+       whereas screen recordings, static slides, and indoor videos have near-zero temporal variance.
+    2. Natural Coastal Chrominance: Ocean water has distinct saturation/value distributions,
+       whereas dark UI themes and screen recordings lack natural daylight/water profiles.
     """
-    if not first_few_frames:
-        return False, "Unable to read video frames"
+    if not first_few_frames or len(first_few_frames) < 5:
+        return False, "Insufficient video frames to verify coastal environment."
 
-    water_sand_foam_ratios = []
+    # 1. Test Fluid Wave Dynamics (Temporal Variance)
+    gray_frames = [cv2.resize(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), (256, 256)) for f in first_few_frames]
+    arr = np.array(gray_frames, dtype=np.float32)
+    temporal_variance = float(np.mean(np.var(arr, axis=0)))
+
+    # Real coastal surf has wave propagation variance > 10.0 (typically 50.0 - 250.0).
+    # Static screen recordings, UI meetings, or indoor cameras have variance < 3.0 (here 0.24).
+    if temporal_variance < 8.0:
+        return False, f"Static or non-fluid video detected (temporal motion variance: {temporal_variance:.2f} < 8.0 threshold). Please upload live beach or ocean surf footage."
+
+    # 2. Test Natural Coastal Chrominance & Texture
+    coastal_ratios = []
     for frame in first_few_frames:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
 
-        # 1. Water spectrum: blue/cyan/green hues (H between 35 and 130)
-        water_mask = (h >= 35) & (h <= 130) & (s >= 20) & (v >= 20)
-        # 2. Whitewater foam / Breaking surf: high brightness, low saturation
-        foam_mask = (v >= 200) & (s <= 60)
-        # 3. Sand / beach tones: yellow-orange hues (H between 15 and 35) with moderate saturation
-        sand_mask = (h >= 12) & (h <= 35) & (s >= 30) & (v >= 60)
+        # Natural daylight water: H between 35 and 130, with healthy saturation (s >= 35) and natural brightness (v >= 40)
+        water_mask = (h >= 35) & (h <= 130) & (s >= 35) & (v >= 40)
+        # Whitewater breaking surf: bright reflective foam (v >= 190, s <= 75)
+        foam_mask = (v >= 190) & (s <= 75)
+        # Beach sand: warm yellow/golden tones (H 14-38, s >= 25, v >= 70)
+        sand_mask = (h >= 14) & (h <= 38) & (s >= 25) & (v >= 70)
 
-        coastal_ratio = np.mean(water_mask | foam_mask | sand_mask)
-        water_sand_foam_ratios.append(coastal_ratio)
+        ratio = np.mean(water_mask | foam_mask | sand_mask)
+        coastal_ratios.append(ratio)
 
-    avg_coastal_ratio = float(np.mean(water_sand_foam_ratios))
-
-    # Coastal surf environments typically contain >= 20% water, sand, or foam
-    if avg_coastal_ratio < 0.18:
-        return False, f"Non-coastal environment detected (coastal texture ratio: {avg_coastal_ratio:.1%}). Please upload coastal beach or surf surveillance footage."
+    avg_coastal_ratio = float(np.mean(coastal_ratios))
+    if avg_coastal_ratio < 0.25:
+        return False, f"Non-coastal environment detected (natural coastal ratio: {avg_coastal_ratio:.1%}). Please upload coastal beach or surf surveillance footage."
 
     return True, "Coastal environment verified"
 
