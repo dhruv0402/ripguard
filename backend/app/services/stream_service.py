@@ -99,11 +99,14 @@ class LiveStreamManager:
 
                 h, w = frame.shape[:2]
 
-                # Run inference on every 2nd or 3rd frame to sustain 20+ FPS
-                input_tensor = _preprocess_frame(frame, prev_frame=prev_frame, in_channels=self.in_channels)
-                pred = self.model.predict_mask(input_tensor)
-                raw_conf = float(pred.max())
-                ema_confidence = alpha * raw_conf + (1.0 - alpha) * ema_confidence
+                # Run heavy ONNX/PyTorch inference every 3rd frame to keep stream playback buttery smooth (30 FPS)
+                if frame_count % 3 == 0 or 'last_pred' not in locals():
+                    input_tensor = _preprocess_frame(frame, prev_frame=prev_frame, in_channels=self.in_channels)
+                    last_pred = self.model.predict_mask(input_tensor)
+                    raw_conf = float(last_pred.max())
+                    ema_confidence = alpha * raw_conf + (1.0 - alpha) * ema_confidence
+
+                pred = last_pred
 
                 # Overlay segmentation mask in red if rip current detected
                 if ema_confidence >= 0.40:
@@ -119,8 +122,8 @@ class LiveStreamManager:
                 elif ema_confidence >= 0.40:
                     risk_level = "MEDIUM"
 
-                # Encode to JPEG
-                _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                # Encode to JPEG with optimal performance quality (65)
+                _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
                 self.latest_frame_jpeg = buffer.tobytes()
 
                 self.latest_meta = {

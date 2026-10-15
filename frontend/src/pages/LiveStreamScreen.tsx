@@ -35,7 +35,7 @@ export const LiveStreamScreen: React.FC = () => {
   const [webhookSuccess, setWebhookSuccess] = useState<boolean>(false);
 
   useEffect(() => {
-    // Poll telemetry status and alerts every 500ms
+    // Poll telemetry status and alerts every 1200ms for smooth UI updates without network thrashing
     const interval = setInterval(async () => {
       try {
         const res = await fetch('/api/stream/status');
@@ -52,7 +52,7 @@ export const LiveStreamScreen: React.FC = () => {
       } catch {
         // stream might be starting
       }
-    }, 500);
+    }, 1200);
 
     return () => clearInterval(interval);
   }, []);
