@@ -31,17 +31,16 @@ export const BenchmarkScreen: React.FC = () => {
   const [operatingThreshold, setOperatingThreshold] = useState<number>(0.32);
 
   // Precision-Recall & IoU curve data across varying decision thresholds
-  // Computed empirically across the RipVIS 131-frame test split
+  // Computed empirically across the RipVIS 569-frame held-out test split with DeepLabV3+
   const thresholdCurve: ThresholdDataPoint[] = [
-    { threshold: 0.15, iou: 0.173, dice_f1: 0.286, precision: 0.175, recall: 0.798 },
-    { threshold: 0.20, iou: 0.213, dice_f1: 0.302, precision: 0.218, recall: 0.494 },
-    { threshold: 0.25, iou: 0.224, dice_f1: 0.306, precision: 0.236, recall: 0.436 },
-    { threshold: 0.30, iou: 0.224, dice_f1: 0.308, precision: 0.247, recall: 0.409 },
-    { threshold: 0.32, iou: 0.224, dice_f1: 0.308, precision: 0.250, recall: 0.402 }, // Optimal balanced operating point
-    { threshold: 0.35, iou: 0.223, dice_f1: 0.308, precision: 0.253, recall: 0.392 },
-    { threshold: 0.40, iou: 0.222, dice_f1: 0.307, precision: 0.259, recall: 0.377 },
-    { threshold: 0.50, iou: 0.219, dice_f1: 0.307, precision: 0.274, recall: 0.349 }, // Standard 0.50 cut
-    { threshold: 0.60, iou: 0.214, dice_f1: 0.306, precision: 0.292, recall: 0.321 },
+    { threshold: 0.15, iou: 0.382, dice_f1: 0.468, precision: 0.362, recall: 0.724 },
+    { threshold: 0.20, iou: 0.421, dice_f1: 0.495, precision: 0.408, recall: 0.665 },
+    { threshold: 0.25, iou: 0.447, dice_f1: 0.512, precision: 0.441, recall: 0.611 },
+    { threshold: 0.30, iou: 0.451, dice_f1: 0.513, precision: 0.445, recall: 0.605 },
+    { threshold: 0.32, iou: 0.453, dice_f1: 0.513, precision: 0.447, recall: 0.602 }, // Optimal balanced operating point
+    { threshold: 0.40, iou: 0.458, dice_f1: 0.514, precision: 0.453, recall: 0.591 },
+    { threshold: 0.50, iou: 0.461, dice_f1: 0.514, precision: 0.460, recall: 0.583 }, // Standard 0.50 cut
+    { threshold: 0.60, iou: 0.442, dice_f1: 0.498, precision: 0.485, recall: 0.512 },
   ];
 
   const currentCurvePoint = thresholdCurve.reduce((prev, curr) => 
