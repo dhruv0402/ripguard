@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     output_dir: str = "storage/outputs"
     max_upload_size_mb: int = 500  # video files are larger than the receipt-image case
 
-    # Where the trained model checkpoint lives (not committed to git — see ml/README.md)
-    model_checkpoint_path: str = "ml/checkpoints/ripguard_unet_best.pt"
+    # Where the trained model checkpoint lives (v4 DeepLabV3+ with ASPP and Focal Tversky Loss)
+    model_checkpoint_path: str = "ml/checkpoints/ripguard_v4_deeplab_best.pt"
 
     # Frame sampling rate for inference — process every Nth frame rather than
     # every single frame, to keep turnaround time reasonable on CPU/modest GPU

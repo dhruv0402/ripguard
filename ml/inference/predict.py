@@ -45,8 +45,13 @@ class InferenceEngine:
             state_dict = torch.load(checkpoint_path, map_location=device)
             first_weight = state_dict.get("encoder.conv1.weight", None)
             self.in_channels = first_weight.shape[1] if first_weight is not None else 3
+            
+            # Detect architecture from state_dict keys
+            is_deeplab = any("aspp" in k for k in state_dict.keys())
+            arch_name = "DeepLabV3Plus" if is_deeplab else "Unet"
+
             self.model = smp.create_model(
-                arch="Unet",
+                arch=arch_name,
                 encoder_name="resnet34",
                 encoder_weights=None,
                 in_channels=self.in_channels,
@@ -55,6 +60,22 @@ class InferenceEngine:
             self.model.load_state_dict(state_dict)
             self.model.to(device).eval()
             self.ort_session = None
+
+    def clean_mask(self, prob_mask: np.ndarray, threshold: float = 0.50, min_area: int = 400) -> np.ndarray:
+        """Applies morphological opening and connected-component area filtering to eliminate false positive foam halos."""
+        binary = (prob_mask > threshold).astype(np.uint8)
+        if not np.any(binary):
+            return np.zeros_like(prob_mask)
+            
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        opened = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(opened, connectivity=8)
+        cleaned = np.zeros_like(prob_mask)
+        for lbl in range(1, num_labels):
+            if stats[lbl, cv2.CC_STAT_AREA] >= min_area:
+                cleaned[labels == lbl] = prob_mask[labels == lbl]
+        return cleaned
 
     def predict_mask(self, input_tensor: torch.Tensor) -> np.ndarray:
         """Takes [1, C, H, W] torch tensor, returns [H, W] float probability mask in [0, 1]."""
@@ -219,7 +240,10 @@ def run_inference_on_video(
 
             if frame_idx % frame_sample_rate == 0:
                 input_tensor = _preprocess_frame(frame, prev_frame=prev_frame, in_channels=in_channels).to(device)
-                pred = model.predict_mask(input_tensor)
+                pred_raw = model.predict_mask(input_tensor)
+                
+                # Apply morphological cleanup and connected component filtering to strip foam halos
+                pred = model.clean_mask(pred_raw, threshold=confidence_threshold_for_detection, min_area=400) if hasattr(model, 'clean_mask') else pred_raw
                 confidence = float(pred.max())
 
                 risk_timeline.append({"t": round(timestamp_sec, 2), "confidence": round(confidence, 4)})
