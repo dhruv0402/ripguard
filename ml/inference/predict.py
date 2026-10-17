@@ -185,12 +185,13 @@ def run_inference_on_video(
     output_dir: str,
     frame_sample_rate: int = 5,
     confidence_threshold_for_detection: float = 0.5,
+    frame_callback=None,
 ) -> dict:
     """
     Returns:
         {
             "annotated_video_path": str,
-            "risk_timeline": [{"t": float, "confidence": float}, ...],
+            "risk_timeline": [{"t": float, "confidence": float, "region": dict | None}, ...],
             "detections": [{"start": float, "end": float, "confidence": float, "region": dict}, ...]
         }
     """
@@ -198,6 +199,7 @@ def run_inference_on_video(
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
     # Read initial 15 frames for coastal domain validation
     sample_frames = []
@@ -230,16 +232,22 @@ def run_inference_on_video(
     frame_idx = 0
     prev_frame = None
 
+    last_pred = None
+    last_flow_vis = None
+    last_confidence = 0.0
+    last_region = None
+
     with torch.no_grad():
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
+            raw_frame = frame.copy()
             timestamp_sec = frame_idx / fps
 
-            if frame_idx % frame_sample_rate == 0:
-                input_tensor = _preprocess_frame(frame, prev_frame=prev_frame, in_channels=in_channels).to(device)
+            if frame_idx % frame_sample_rate == 0 or last_pred is None:
+                input_tensor = _preprocess_frame(raw_frame, prev_frame=prev_frame, in_channels=in_channels).to(device)
                 pred_raw = model.predict_mask(input_tensor)
                 
                 # Apply morphological cleanup and connected component filtering to strip foam halos
@@ -250,7 +258,7 @@ def run_inference_on_video(
                 shear_factor = 0.25
                 if prev_frame is not None:
                     prev_gray = cv2.cvtColor(cv2.resize(prev_frame, (width, height)), cv2.COLOR_BGR2GRAY)
-                    curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    curr_gray = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
                     flow_vis = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
                     
                     # Compute 2D flow curl / shear (dvx/dy - dvy/dx) to distinguish rip current channels from uniform shoreline waves
@@ -276,64 +284,89 @@ def run_inference_on_video(
                     corridor_bonus = 1.0 if (0.02 <= active_area_frac <= 0.16) else 0.65
                     confidence = float(np.clip(peak_prob * (0.55 * shear_factor + 0.45 * corridor_bonus), 0.0, 0.99))
 
-                risk_timeline.append({"t": round(timestamp_sec, 2), "confidence": round(confidence, 4)})
-
+                region = None
                 if confidence >= confidence_threshold_for_detection:
                     region = _mask_to_region(pred, threshold=confidence_threshold_for_detection)
                     raw_detections.append({"t": timestamp_sec, "confidence": confidence, "region": region})
 
-                # Overlay 1: Heatmap of rip current confidence (Red/Orange corridor)
-                mask_resized = cv2.resize(pred, (width, height))
-                overlay = frame.copy()
-                
-                # Highlight rip corridor with vivid red/crimson glow
-                active_mask = mask_resized > confidence_threshold_for_detection
-                overlay[active_mask] = [0, 0, 230]  # Red overlay
-                frame = cv2.addWeighted(overlay, 0.45, frame, 0.55, 0)
+                risk_timeline.append({
+                    "t": round(timestamp_sec, 2),
+                    "confidence": round(confidence, 4),
+                    "region": region,
+                })
 
-                # Overlay 2: Contour boundary outline around active rip current corridor
+                last_pred = pred
+                last_flow_vis = flow_vis
+                last_confidence = confidence
+                last_region = region
+                prev_frame = raw_frame
+
+            # Render continuous detection overlays on EVERY frame (zero flickering)
+            if last_pred is not None:
+                mask_resized = cv2.resize(last_pred, (width, height))
+                active_mask = mask_resized > confidence_threshold_for_detection
+
+                # Overlay 1: Heatmap of rip current confidence (Red/Crimson corridor)
                 if np.any(active_mask):
+                    overlay = frame.copy()
+                    overlay[active_mask] = [0, 0, 230]  # Red overlay in BGR
+                    frame = cv2.addWeighted(overlay, 0.42, frame, 0.58, 0)
+
+                    # Overlay 2: Bright yellow contour boundary around active rip current channel
                     contours, _ = cv2.findContours(active_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    cv2.drawContours(frame, contours, -1, (0, 255, 255), 2)  # Bright yellow contour edge
+                    cv2.drawContours(frame, contours, -1, (0, 255, 255), 2)
 
                 # Overlay 3: Real-time Sea Current Motion Vectors (Arrow grid showing ocean flow)
-                if flow_vis is not None:
-                    step = 32  # Grid spacing for vector arrows
+                if last_flow_vis is not None:
+                    step = 32
                     for y in range(step // 2, height, step):
                         for x in range(step // 2, width, step):
-                            fx, fy = flow_vis[y, x]
+                            fx, fy = last_flow_vis[y, x]
                             mag = np.hypot(fx, fy)
-                            if mag > 1.2:  # Only draw vectors with noticeable motion
+                            if mag > 1.2:
                                 end_x = int(np.clip(x + fx * 2.5, 0, width - 1))
                                 end_y = int(np.clip(y + fy * 2.5, 0, height - 1))
-                                # In rip current regions, draw arrows in bright red/yellow; in surrounding water, draw in cyan
                                 color = (0, 0, 255) if active_mask[y, x] else (255, 200, 0)
                                 cv2.arrowedLine(frame, (x, y), (end_x, end_y), color, 1, tipLength=0.35)
 
-                # Overlay 4: Top-left telemetry watermark on video
-                cv2.putText(
-                    frame,
-                    f"RIPGUARD TRACKER | CONF: {confidence * 100:.1f}% | FLOW ACTIVE",
-                    (20, 35),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 0, 0),
-                    3,
-                    cv2.LINE_AA,
-                )
-                cv2.putText(
-                    frame,
-                    f"RIPGUARD TRACKER | CONF: {confidence * 100:.1f}% | FLOW ACTIVE",
-                    (20, 35),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 255) if confidence >= 0.5 else (255, 255, 255),
-                    1,
-                    cv2.LINE_AA,
+                # Overlay 4: Tactical Target Corridor Bounding Box on active rip currents
+                if last_region and last_confidence >= confidence_threshold_for_detection:
+                    bx = int(last_region["x"] * width)
+                    by = int(last_region["y"] * height)
+                    bw = int(last_region["w"] * width)
+                    bh = int(last_region["h"] * height)
+                    cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (60, 40, 255), 2)
+                    label = f"RIP CORRIDOR [{last_confidence * 100:.1f}%]"
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+                    ly = max(by - 8, th + 8)
+                    cv2.rectangle(frame, (bx, ly - th - 6), (bx + tw + 10, ly + 4), (40, 20, 220), -1)
+                    cv2.putText(frame, label, (bx + 5, ly - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+
+                # Overlay 5: Top-left telemetry watermark on video
+                status_str = "RIP HAZARD DETECTED" if last_confidence >= 0.7 else ("ELEVATED SURF" if last_confidence >= 0.4 else "NORMAL SURF")
+                hud_text = f"RIPGUARD LIVE | {status_str} | CONF: {last_confidence * 100:.1f}%"
+                cv2.putText(frame, hud_text, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 0, 0), 3, cv2.LINE_AA)
+                hud_color = (60, 60, 255) if last_confidence >= 0.7 else ((0, 215, 255) if last_confidence >= 0.4 else (120, 255, 120))
+                cv2.putText(frame, hud_text, (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.62, hud_color, 2, cv2.LINE_AA)
+
+            writer.write(frame)
+
+            # Emit live frame callback every 2nd frame for real-time browser viewing during ingestion
+            if frame_callback is not None and (frame_idx % 2 == 0):
+                _, jpg_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
+                frame_callback(
+                    jpg_buf.tobytes(),
+                    {
+                        "frame_idx": frame_idx + 1,
+                        "total_frames": total_frames,
+                        "progress_pct": round(min(99.0, ((frame_idx + 1) / max(1, total_frames)) * 100.0), 1),
+                        "confidence": round(float(last_confidence), 4),
+                        "t": round(timestamp_sec, 2),
+                        "region": last_region,
+                        "timeline_so_far": risk_timeline[-60:],
+                    },
                 )
 
-            prev_frame = frame.copy()
-            writer.write(frame)
             frame_idx += 1
 
     cap.release()
@@ -352,16 +385,21 @@ def run_inference_on_video(
     ema = None
     for pt, c in zip(risk_timeline, median_confs):
         ema = c if ema is None else (alpha * c + (1.0 - alpha) * ema)
-        smoothed_timeline.append({"t": pt["t"], "confidence": round(float(ema), 4)})
+        s_conf = round(float(ema), 4)
+        smoothed_timeline.append({
+            "t": pt["t"],
+            "confidence": s_conf,
+            "region": pt.get("region") if s_conf >= confidence_threshold_for_detection else None,
+        })
 
     # Filter raw detections with smoothed confidence thresholding to prevent spurious false alarms
     smoothed_detections = []
-    for raw_det, smooth_pt in zip(raw_detections, smoothed_timeline):
-        if smooth_pt["confidence"] >= confidence_threshold_for_detection:
+    for pt in smoothed_timeline:
+        if pt["confidence"] >= confidence_threshold_for_detection and pt.get("region"):
             smoothed_detections.append({
-                "t": raw_det["t"],
-                "confidence": smooth_pt["confidence"],
-                "region": raw_det["region"]
+                "t": pt["t"],
+                "confidence": pt["confidence"],
+                "region": pt["region"],
             })
 
     # Re-encode to browser-compatible H.264 (avc1) if ffmpeg is available

@@ -64,18 +64,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, isLog
               </button>
 
               <button
-                onClick={() => setCurrentTab('stream')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center space-x-1.5 ${
-                  currentTab === 'stream'
-                    ? 'bg-rose-500/15 text-rose-300 border border-rose-500/40 shadow-[0_0_12px_rgba(244,63,94,0.2)]'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
-                }`}
-              >
-                <Radio className="w-3.5 h-3.5 text-rose-400 animate-pulse" />
-                <span>LIVE STREAM</span>
-              </button>
-
-              <button
                 onClick={() => setCurrentTab('benchmark')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center space-x-1.5 ${
                   currentTab === 'benchmark'

@@ -17,6 +17,7 @@ export interface Detection {
 export interface TimelinePoint {
   t: number;
   confidence: number;
+  region?: { x: number; y: number; w: number; h: number } | null;
 }
 
 export interface AnalysisSession {

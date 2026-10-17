@@ -20,11 +20,12 @@ from app.models.session import AnalysisSession, Detection, SessionStatus, RiskLe
 settings = get_settings()
 
 # Confidence thresholds for deriving an overall risk level from the timeline.
-# These are intentionally simple and documented here so they're easy to
-# revisit once real model performance numbers are in — don't treat these
-# as tuned/validated values yet.
 HIGH_RISK_CONFIDENCE_THRESHOLD = 0.7
 MEDIUM_RISK_CONFIDENCE_THRESHOLD = 0.4
+
+# In-memory registry of active ingestion streams so the UI can display live
+# frame-by-frame detection on top of the ingested video while it processes.
+LIVE_SESSION_STREAMS: dict[str, dict] = {}
 
 
 def _derive_risk_level(max_confidence: float) -> RiskLevel:
@@ -37,10 +38,31 @@ def _derive_risk_level(max_confidence: float) -> RiskLevel:
 
 async def process_video(session_id: uuid.UUID, session_maker=None) -> None:
     sm = session_maker or db_module.AsyncSessionLocal
+    sid_str = str(session_id)
+    LIVE_SESSION_STREAMS[sid_str] = {
+        "is_active": True,
+        "latest_jpeg": None,
+        "telemetry": {
+            "frame_idx": 0,
+            "total_frames": 1,
+            "progress_pct": 0.0,
+            "confidence": 0.0,
+            "t": 0.0,
+            "region": None,
+            "timeline_so_far": [],
+        },
+    }
+
+    def _on_frame(jpg_bytes: bytes, meta: dict):
+        if sid_str in LIVE_SESSION_STREAMS:
+            LIVE_SESSION_STREAMS[sid_str]["latest_jpeg"] = jpg_bytes
+            LIVE_SESSION_STREAMS[sid_str]["telemetry"] = meta
+
     async with sm() as db:
         result = await db.get(AnalysisSession, session_id)
         session = result
         if session is None:
+            LIVE_SESSION_STREAMS.pop(sid_str, None)
             return
 
         session.status = SessionStatus.PROCESSING
@@ -53,13 +75,9 @@ async def process_video(session_id: uuid.UUID, session_maker=None) -> None:
                 settings.model_checkpoint_path,
                 settings.output_dir,
                 settings.inference_frame_sample_rate,
+                0.5,
+                _on_frame,
             )
-            # inference_result expected shape (see ml/inference/predict.py):
-            # {
-            #   "annotated_video_path": str,
-            #   "risk_timeline": [{"t": float, "confidence": float}, ...],
-            #   "detections": [{"start": float, "end": float, "confidence": float, "region": dict}, ...]
-            # }
 
             session.annotated_video_path = inference_result["annotated_video_path"]
             session.risk_timeline = inference_result["risk_timeline"]
@@ -93,5 +111,9 @@ async def process_video(session_id: uuid.UUID, session_maker=None) -> None:
             session.error_message = str(e)
             session.overall_risk_level = None
             session.risk_timeline = None
+
+        finally:
+            if sid_str in LIVE_SESSION_STREAMS:
+                LIVE_SESSION_STREAMS[sid_str]["is_active"] = False
 
         await db.commit()

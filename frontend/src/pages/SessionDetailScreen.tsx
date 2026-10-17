@@ -17,13 +17,22 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
   const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  const [liveTelemetry, setLiveTelemetry] = useState<{
+    frame_idx: number;
+    total_frames: number;
+    progress_pct: number;
+    confidence: number;
+    t: number;
+    region: { x: number; y: number; w: number; h: number } | null;
+    timeline_so_far: { t: number; confidence: number; region?: { x: number; y: number; w: number; h: number } | null }[];
+  } | null>(null);
+  const [showHudReticle, setShowHudReticle] = useState(true);
+
   const fetchSession = async () => {
     try {
       const data = await apiFetch(`/api/sessions/${sessionId}`);
       setSession(data);
-      if (data.status === 'done' || data.status === 'failed') {
-        setLoading(false);
-      }
+      setLoading(false);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch session detail');
       setLoading(false);
@@ -32,11 +41,22 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
 
   useEffect(() => {
     fetchSession();
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       if (session?.status !== 'done' && session?.status !== 'failed') {
         fetchSession();
+        try {
+          const liveRes = await fetch(`/api/sessions/${sessionId}/live-telemetry`);
+          if (liveRes.ok) {
+            const liveData = await liveRes.json();
+            if (liveData.telemetry) {
+              setLiveTelemetry(liveData.telemetry);
+            }
+          }
+        } catch {
+          // ignore transient poll errors
+        }
       }
-    }, 2500);
+    }, 1000);
     return () => clearInterval(interval);
   }, [sessionId, session?.status]);
 
@@ -82,8 +102,11 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
     );
   }
 
-  const timeline = session.risk_timeline || [];
-  const maxConfidence = timeline.length > 0 ? Math.max(...timeline.map((p) => p.confidence)) : 0;
+  const isProcessing = session.status === 'pending' || session.status === 'processing';
+  const timeline = isProcessing && liveTelemetry?.timeline_so_far?.length
+    ? liveTelemetry.timeline_so_far
+    : (session.risk_timeline || []);
+  const maxConfidence = timeline.length > 0 ? Math.max(...timeline.map((p) => p.confidence)) : (liveTelemetry?.confidence || 0);
   const detections = session.detections || [];
 
   return (
@@ -111,6 +134,16 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
         </div>
 
         <div className="flex items-center space-x-3 text-xs font-mono">
+          <button
+            onClick={() => setShowHudReticle((v) => !v)}
+            className={`px-2.5 py-1 rounded border transition-all ${
+              showHudReticle
+                ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+                : 'bg-slate-900 text-slate-400 border-slate-800'
+            }`}
+          >
+            HUD RETICLE: <strong>{showHudReticle ? 'ON' : 'OFF'}</strong>
+          </button>
           <span className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-400">
             LOC: <strong className="text-slate-200">{session.location_label || 'COASTAL SITE #1'}</strong>
           </span>
@@ -123,40 +156,46 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
       {/* Mandatory Disclaimer */}
       <DisclaimerBanner />
 
-      {/* Processing or Failed State */}
-      {session.status !== 'done' && (
+      {/* Failed State */}
+      {session.status === 'failed' && (
         <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-8 text-center space-y-4 shadow-2xl">
-          {session.status === 'failed' ? (
-            <div className="space-y-3 max-w-lg mx-auto">
-              <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/20">
-                <AlertCircle className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold font-mono text-white uppercase">Inference Aborted / Validation Rejected</h3>
-              <p className="text-xs font-mono text-rose-300 leading-relaxed bg-rose-950/30 p-3 rounded-lg border border-rose-500/20">
-                {session.error_message || 'Inference pipeline error or Out-of-Distribution rejection.'}
-              </p>
+          <div className="space-y-3 max-w-lg mx-auto">
+            <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/20">
+              <AlertCircle className="w-6 h-6" />
             </div>
-          ) : (
-            <div className="space-y-3 max-w-md mx-auto">
-              <div className="w-12 h-12 rounded-full bg-cyan-500/10 text-cyan-400 flex items-center justify-center mx-auto border border-cyan-500/30 animate-pulse">
-                <Clock className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold font-mono text-white uppercase">
-                {session.status === 'processing' ? 'Running Spatio-Temporal Segmentation...' : 'Awaiting Ingestion Worker...'}
-              </h3>
-              <p className="text-xs font-mono text-slate-400 leading-relaxed">
-                Applying Farnebäck optical flow vectors, coastal domain verification, and Temporal Confidence Aggregation (TCA).
-              </p>
-              <div className="text-xs text-cyan-400 font-mono tracking-widest uppercase">
-                STATUS: {session.status.toUpperCase()}
-              </div>
-            </div>
-          )}
+            <h3 className="text-base font-bold font-mono text-white uppercase">Inference Aborted / Validation Rejected</h3>
+            <p className="text-xs font-mono text-rose-300 leading-relaxed bg-rose-950/30 p-3 rounded-lg border border-rose-500/20">
+              {session.error_message || 'Inference pipeline error or Out-of-Distribution rejection.'}
+            </p>
+          </div>
         </div>
       )}
 
-      {/* Main Analysis View when Done */}
-      {session.status === 'done' && (
+      {/* Live Ingestion Progress Banner while Processing */}
+      {isProcessing && (
+        <div className="bg-cyan-950/30 border border-cyan-500/40 rounded-xl p-4 space-y-2 shadow-lg">
+          <div className="flex items-center justify-between text-xs font-mono">
+            <div className="flex items-center space-x-2 text-cyan-300 font-bold uppercase">
+              <Radio className="w-4 h-4 text-rose-400 animate-pulse" />
+              <span>LIVE INGESTION DETECTION ACTIVE — STREAMING ANNOTATED FRAMES IN REAL TIME</span>
+            </div>
+            <div className="text-cyan-400 font-bold">
+              {liveTelemetry
+                ? `Frame ${liveTelemetry.frame_idx} / ${liveTelemetry.total_frames} (${liveTelemetry.progress_pct}%)`
+                : 'Initializing DeepLabV3+ & Optical Flow...'}
+            </div>
+          </div>
+          <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-cyan-400 h-2 transition-all duration-300"
+              style={{ width: `${liveTelemetry?.progress_pct || 5}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Main Analysis & Live Detection View (Shown both during Live Processing and when Done) */}
+      {(session.status === 'done' || isProcessing) && (
         <div className="space-y-6">
           {/* Quick Metrics Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
@@ -165,14 +204,14 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
               <div className="mt-1 flex items-center space-x-2">
                 <span
                   className={`text-xl font-bold font-mono uppercase ${
-                    session.overall_risk_level === 'high'
+                    (session.overall_risk_level === 'high' || (isProcessing && maxConfidence >= 0.7))
                       ? 'text-rose-400'
-                      : session.overall_risk_level === 'medium'
+                      : (session.overall_risk_level === 'medium' || (isProcessing && maxConfidence >= 0.4))
                       ? 'text-amber-400'
                       : 'text-emerald-400'
                   }`}
                 >
-                  {session.overall_risk_level || 'LOW'}
+                  {session.overall_risk_level || (maxConfidence >= 0.7 ? 'HIGH' : maxConfidence >= 0.4 ? 'MEDIUM' : 'LOW')}
                 </span>
                 <span className="text-xs font-mono text-slate-500">
                   ({(maxConfidence * 100).toFixed(1)}% PEAK)
@@ -191,7 +230,7 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
               <div className="text-[10px] font-mono uppercase text-slate-400">Motion Tracking Algorithm</div>
               <div className="mt-1 text-sm font-bold font-mono text-cyan-400 flex items-center">
                 <Waves className="w-4 h-4 mr-1.5" />
-                Dense Farnebäck (5-Ch)
+                DeepLabV3+ &amp; Farnebäck (5-Ch)
               </div>
             </div>
 
@@ -199,7 +238,7 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
               <div className="text-[10px] font-mono uppercase text-slate-400">Filter Aggregation</div>
               <div className="mt-1 text-sm font-bold font-mono text-emerald-400 flex items-center">
                 <Gauge className="w-4 h-4 mr-1.5" />
-                TCA Smoothed (α=0.65)
+                Vorticity + Rolling Median TCA
               </div>
             </div>
           </div>
@@ -210,35 +249,53 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
             <div className="lg:col-span-8 space-y-4">
               <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
                 <div className="relative bg-black aspect-video flex items-center justify-center overflow-hidden">
-                  <video
-                    ref={videoRef}
-                    src={getVideoUrl(session.id)}
-                    controls
-                    onTimeUpdate={handleTimeUpdate}
-                    onLoadedMetadata={handleLoadedMetadata}
-                    onPlay={() => setIsPlaying(true)}
-                    onPause={() => setIsPlaying(false)}
-                    className="w-full h-full object-contain"
-                  />
+                  {isProcessing ? (
+                    <img
+                      src={`/api/sessions/${session.id}/live-feed`}
+                      alt="Live rip current detection on ingested video"
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <video
+                      key={session.annotated_video_path || session.id}
+                      ref={videoRef}
+                      src={getVideoUrl(session.id)}
+                      controls
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      onTimeUpdate={handleTimeUpdate}
+                      onLoadedMetadata={handleLoadedMetadata}
+                      onPlay={() => setIsPlaying(true)}
+                      onPause={() => setIsPlaying(false)}
+                      className="w-full h-full object-contain"
+                    />
+                  )}
 
                   {/* Dynamic Tactical HUD Overlay */}
                   {(() => {
+                    const activeTime = isProcessing ? (liveTelemetry?.t || 0) : currentTime;
                     const activeDetection = detections.find(
-                      (d) => currentTime >= d.start_timestamp_sec && currentTime <= d.end_timestamp_sec
+                      (d) => activeTime >= d.start_timestamp_sec && activeTime <= d.end_timestamp_sec
                     );
                     const nearestPoint = timeline.reduce((prev, curr) => {
-                      return Math.abs(curr.t - currentTime) < Math.abs(prev.t - currentTime) ? curr : prev;
-                    }, timeline[0] || { t: 0, confidence: 0 });
+                      return Math.abs(curr.t - activeTime) < Math.abs(prev.t - activeTime) ? curr : prev;
+                    }, timeline[0] || { t: 0, confidence: 0, region: null });
 
-                    const activeConfidence = activeDetection
-                      ? activeDetection.confidence
+                    const activeConfidence = isProcessing && liveTelemetry
+                      ? liveTelemetry.confidence
                       : nearestPoint
                       ? nearestPoint.confidence
+                      : activeDetection
+                      ? activeDetection.confidence
                       : 0;
 
                     const isHigh = activeConfidence >= 0.7;
                     const isMed = activeConfidence >= 0.4 && activeConfidence < 0.7;
-                    const region = activeDetection?.bounding_region;
+                    const region = isProcessing
+                      ? liveTelemetry?.region
+                      : (nearestPoint?.region || (activeConfidence >= 0.5 ? activeDetection?.bounding_region : null));
 
                     return (
                       <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between">
@@ -249,9 +306,11 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
                               <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
                             </span>
-                            <span className="text-slate-300 font-bold uppercase tracking-wider">TACTICAL HUD</span>
+                            <span className="text-slate-300 font-bold uppercase tracking-wider">
+                              {isProcessing ? 'LIVE INGESTION HUD' : 'TACTICAL HUD'}
+                            </span>
                             <span className="text-slate-600">|</span>
-                            <span className="text-cyan-400">{currentTime.toFixed(1)}s</span>
+                            <span className="text-cyan-400">{activeTime.toFixed(1)}s</span>
                           </div>
 
                           <div className="flex items-center space-x-2 bg-slate-950/90 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
@@ -272,17 +331,17 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                         </div>
 
                         {/* Bounding Box Reticle */}
-                        {region && (
+                        {showHudReticle && region && activeConfidence >= 0.45 && (
                           <div
-                            className="absolute border-2 border-dashed border-rose-500 rounded bg-rose-500/15 backdrop-blur-[1px] transition-all duration-200 shadow-[0_0_20px_rgba(244,63,94,0.5)]"
+                            className="absolute border-2 border-dashed border-rose-500 rounded bg-rose-500/15 backdrop-blur-[1px] transition-all duration-150 shadow-[0_0_20px_rgba(244,63,94,0.5)]"
                             style={{
-                              left: `${Math.max(5, Math.min(90, region.x * 100))}%`,
-                              top: `${Math.max(5, Math.min(90, region.y * 100))}%`,
-                              width: `${Math.max(15, Math.min(80, region.w * 100))}%`,
-                              height: `${Math.max(15, Math.min(80, region.h * 100))}%`,
+                              left: `${Math.max(2, Math.min(92, region.x * 100))}%`,
+                              top: `${Math.max(8, Math.min(88, region.y * 100))}%`,
+                              width: `${Math.max(10, Math.min(90, region.w * 100))}%`,
+                              height: `${Math.max(10, Math.min(85, region.h * 100))}%`,
                             }}
                           >
-                            <div className="absolute -top-6 left-0 bg-rose-600 text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow flex items-center space-x-1">
+                            <div className="absolute -top-6 left-0 bg-rose-600 text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow flex items-center space-x-1 whitespace-nowrap">
                               <Crosshair className="w-3 h-3" />
                               <span>TARGET CORRIDOR [{(activeConfidence * 100).toFixed(1)}%]</span>
                             </div>
@@ -290,10 +349,10 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                         )}
 
                         {/* Bottom Reticle */}
-                        <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 bg-slate-950/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800">
+                        <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 bg-slate-950/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800 mb-8">
                           <div className="flex items-center space-x-2">
                             <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                            <span>FARNEBÄCK SURFACE FLOW TRACKER ACTIVE</span>
+                            <span>DEEPLABV3+ &amp; FARNEBÄCK VORTICITY TRACKER ACTIVE</span>
                           </div>
                           <div>
                             CORRIDOR CONFIDENCE: <strong className="text-cyan-400">{(activeConfidence * 100).toFixed(1)}%</strong>

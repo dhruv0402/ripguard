@@ -93,19 +93,64 @@ async def list_sessions(
 @router.get("/{session_id}/video")
 async def get_session_video(
     session_id: uuid.UUID,
-    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(AnalysisSession)
-        .where(AnalysisSession.id == session_id, AnalysisSession.owner_id == user.id)
+        select(AnalysisSession).where(AnalysisSession.id == session_id)
     )
     session = result.scalar_one_or_none()
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if not session.annotated_video_path or not os.path.exists(session.annotated_video_path):
-        raise HTTPException(status_code=404, detail="Annotated video not available yet")
+
+    video_path = session.annotated_video_path or session.storage_path
+    if not video_path or not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video not available yet")
 
     from fastapi.responses import FileResponse
-    return FileResponse(session.annotated_video_path, media_type="video/mp4")
+    return FileResponse(video_path, media_type="video/mp4")
+
+
+@router.get("/{session_id}/live-telemetry")
+async def get_session_live_telemetry(session_id: uuid.UUID):
+    """Returns real-time frame-by-frame telemetry while an ingested video is being processed."""
+    from app.services.analysis_service import LIVE_SESSION_STREAMS
+    sid_str = str(session_id)
+    state = LIVE_SESSION_STREAMS.get(sid_str)
+    if not state:
+        return {"is_active": False, "telemetry": None}
+    return {
+        "is_active": state.get("is_active", False),
+        "telemetry": state.get("telemetry"),
+    }
+
+
+@router.get("/{session_id}/live-feed")
+async def get_session_live_feed(session_id: uuid.UUID):
+    """Streams live annotated MJPEG frames of the ingested video as it is being analyzed."""
+    import asyncio
+    from fastapi.responses import StreamingResponse
+    from app.services.analysis_service import LIVE_SESSION_STREAMS
+
+    sid_str = str(session_id)
+
+    async def frame_generator():
+        last_sent = None
+        for _ in range(1800):  # up to ~90s
+            state = LIVE_SESSION_STREAMS.get(sid_str)
+            if state and state.get("latest_jpeg") is not None:
+                jpg = state["latest_jpeg"]
+                if jpg is not last_sent:
+                    last_sent = jpg
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n"
+                    )
+            if state and not state.get("is_active", False):
+                break
+            await asyncio.sleep(0.05)
+
+    return StreamingResponse(
+        frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
