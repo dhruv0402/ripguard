@@ -60,6 +60,118 @@ async def upload_video(
     return session
 
 
+TEST_ASSETS_CATALOG = [
+    {
+        "filename": "active_rip_current.mp4",
+        "title": "Active Rip Current Channel (Tower Cam)",
+        "category": "Strong Rip Current (High Risk)",
+        "location": "South Goa Lifeguard Tower 2",
+    },
+    {
+        "filename": "drone_rip_channel_001.mp4",
+        "title": "Aerial Drone Rip Current Neck & Plume (RipVIS-001)",
+        "category": "Strong Rip Current (High Risk)",
+        "location": "RipVIS Aerial Survey Sector A",
+    },
+    {
+        "filename": "coastal_surf_rip_014.mp4",
+        "title": "Breaking Sandbar Feeder Current (RipVIS-014)",
+        "category": "Strong Rip Current (High Risk)",
+        "location": "RipVIS Coastal Cam 14",
+    },
+    {
+        "filename": "beach_break_rip_024.mp4",
+        "title": "Cross-Shore Surf Break Rip Channel (RipVIS-024)",
+        "category": "Moderate / Strong Rip Current",
+        "location": "RipVIS Surf Break Sector 24",
+    },
+    {
+        "filename": "offshore_plume_rip_053.mp4",
+        "title": "Offshore Sediment Rip Plume (RipVIS-053)",
+        "category": "Moderate Rip Current (Caution)",
+        "location": "RipVIS Headland Cam 53",
+    },
+    {
+        "filename": "beach_ripvis_072.mp4",
+        "title": "Moderate Offshore Feeder Channel (RipVIS-072)",
+        "category": "Moderate Rip Current (Caution)",
+        "location": "Calangute North Cam",
+    },
+    {
+        "filename": "calm_beach_no_rip.mp4",
+        "title": "Calm Beach Shoreline Wash (Negative Control)",
+        "category": "Safe / Calm Water (Low Risk)",
+        "location": "Baga South Safe Zone",
+    },
+    {
+        "filename": "safe_shoreline_waves_nr004.mp4",
+        "title": "Uniform Planar Breaking Waves (RipVIS-NR-004)",
+        "category": "Safe / Calm Water (Low Risk)",
+        "location": "RipVIS Safe Control Beach #4",
+    },
+    {
+        "filename": "calm_coastal_surf_nr019.mp4",
+        "title": "Gentle Coastal Swell — No Rip Channel (RipVIS-NR-019)",
+        "category": "Safe / Calm Water (Low Risk)",
+        "location": "RipVIS Safe Control Beach #19",
+    },
+    {
+        "filename": "non_coastal_ood_test.mp4",
+        "title": "Non-Beach / Indoor Feed (OOD Guardrail Test)",
+        "category": "Out-of-Distribution Rejection Test",
+        "location": "Indoor Control Room Feed",
+    },
+]
+
+
+@router.get("/test-assets/list")
+async def list_test_assets():
+    """Lists available test videos in test_assets/ for quick UI testing."""
+    available = []
+    for item in TEST_ASSETS_CATALOG:
+        path = os.path.join("test_assets", item["filename"])
+        if os.path.exists(path):
+            size_mb = round(os.path.getsize(path) / (1024 * 1024), 2)
+            available.append({**item, "size_mb": size_mb})
+    return available
+
+
+@router.post("/test-assets/run", response_model=SessionOut, status_code=201)
+async def run_test_asset(
+    background_tasks: BackgroundTasks,
+    filename: str = Form(...),
+    location_label: str | None = Form(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Creates and runs a live analysis session directly from a file in test_assets/."""
+    import shutil
+    safe_name = os.path.basename(filename)
+    src_path = os.path.join("test_assets", safe_name)
+    if not os.path.exists(src_path):
+        raise HTTPException(status_code=404, detail=f"Test asset {safe_name} not found in test_assets/")
+
+    os.makedirs(settings.upload_dir, exist_ok=True)
+    session_id = uuid.uuid4()
+    storage_path = os.path.join(settings.upload_dir, f"{session_id}.mp4")
+    shutil.copyfile(src_path, storage_path)
+
+    session = AnalysisSession(
+        id=session_id,
+        owner_id=user.id,
+        filename=safe_name,
+        location_label=location_label or "RipVIS Test Suite",
+        storage_path=storage_path,
+        status=SessionStatus.PENDING,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    background_tasks.add_task(process_video, session.id)
+    return session
+
+
 @router.get("/{session_id}", response_model=SessionDetailOut)
 async def get_session(
     session_id: uuid.UUID,

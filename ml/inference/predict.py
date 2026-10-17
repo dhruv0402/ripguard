@@ -258,39 +258,42 @@ def run_inference_on_video(
 
                 # Calculate optical flow vectors & hydrodynamic vorticity (shear)
                 flow_vis = None
-                shear_factor = 0.25
+                shear_p98 = 0.15
                 if prev_frame is not None:
                     prev_gray = cv2.cvtColor(cv2.resize(prev_frame, (width, height)), cv2.COLOR_BGR2GRAY)
                     curr_gray = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
                     flow_vis = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
                     
-                    # Compute 2D flow curl / shear (dvx/dy - dvy/dx) to distinguish rip current channels from uniform shoreline waves
+                    # Compute 2D flow curl / shear (dvx/dy - dvy/dx)
                     dvx_dy = np.gradient(flow_vis[..., 0], axis=0)
                     dvy_dx = np.gradient(flow_vis[..., 1], axis=1)
                     vorticity = np.abs(dvx_dy - dvy_dx)
                     shear_p98 = float(np.percentile(vorticity, 98))
-                    # Active rip currents exhibit shear >= 0.38; calm uniform waves exhibit shear <= 0.30
-                    shear_factor = float(np.clip((shear_p98 - 0.22) / 0.20, 0.15, 1.0))
 
-                # Spatial topology & rotational shear check: true rip currents form localized channels
-                # with measurable rotational vorticity (shear_factor >= 0.45), whereas uniform planar
-                # shoreline wave wash has low rotational curl (shear_factor < 0.45) or spans >16% of the frame.
                 active_area_frac = float((pred > confidence_threshold_for_detection).sum() / (pred.shape[0] * pred.shape[1]))
-                if active_area_frac < 0.005:
-                    confidence = 0.05
-                elif shear_factor < 0.42 or (active_area_frac > 0.16 and shear_factor < 0.58):
-                    # Uniform calm shoreline wash without rotational rip shear -> suppress false alarm
-                    confidence = float(np.percentile(pred, 99) * 0.25)
-                    pred = pred * 0.25
+                region = _mask_to_region(pred, threshold=confidence_threshold_for_detection)
+
+                if active_area_frac < 0.005 or region is None:
+                    confidence = 0.08
+                    region = None
+                elif region["w"] > 0.65 or (region["y"] <= 0.02 and region["w"] > 0.52):
+                    # Wide horizontal shoreline wave band or horizon artifact -> suppress false alarm
+                    confidence = float(np.percentile(pred, 99) * 0.22)
+                    pred = pred * 0.22
+                    region = None
                 else:
                     peak_prob = float(np.percentile(pred, 99.5))
-                    corridor_bonus = 1.0 if (0.02 <= active_area_frac <= 0.16) else 0.65
-                    confidence = float(np.clip(peak_prob * (0.55 * shear_factor + 0.45 * corridor_bonus), 0.0, 0.99))
+                    # Distinguish strong well-developed rip channels (HIGH) from moderate feeder channels (MEDIUM)
+                    if active_area_frac >= 0.115 or shear_p98 >= 0.195:
+                        channel_strength = float(np.clip(0.76 + 0.65 * active_area_frac + 0.25 * shear_p98, 0.75, 0.94))
+                    else:
+                        channel_strength = float(np.clip(0.50 + 0.80 * active_area_frac + 0.20 * shear_p98, 0.52, 0.66))
+                    confidence = round(float(peak_prob * channel_strength), 4)
 
-                region = None
-                if confidence >= confidence_threshold_for_detection:
-                    region = _mask_to_region(pred, threshold=confidence_threshold_for_detection)
+                if confidence >= confidence_threshold_for_detection and region:
                     raw_detections.append({"t": timestamp_sec, "confidence": confidence, "region": region})
+                else:
+                    region = None
 
                 risk_timeline.append({
                     "t": round(timestamp_sec, 2),
@@ -302,7 +305,6 @@ def run_inference_on_video(
                 last_flow_vis = flow_vis
                 last_confidence = confidence
                 last_region = region
-                prev_frame = raw_frame
 
             # Render continuous detection overlays on EVERY frame (zero flickering)
             if last_pred is not None:
@@ -370,6 +372,7 @@ def run_inference_on_video(
                     },
                 )
 
+            prev_frame = raw_frame
             frame_idx += 1
 
     cap.release()
