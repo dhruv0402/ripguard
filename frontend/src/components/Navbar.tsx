@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Eye, Radio, BarChart3, Plus, LogOut, Waves, AlertTriangle } from 'lucide-react';
+import { Eye, BarChart3, Plus, LogOut, Waves, Info } from 'lucide-react';
 
 interface NavbarProps {
   currentTab: string;
@@ -10,97 +10,97 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, isLoggedIn, onLogout }) => {
   return (
-    <header className="border-b border-cyan-950/80 bg-slate-950/90 backdrop-blur-md sticky top-0 z-50">
+    <header className="border-b border-slate-800 bg-slate-950/95 backdrop-blur-md sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand */}
         <div
           className="flex items-center space-x-3 cursor-pointer group"
           onClick={() => setCurrentTab(isLoggedIn ? 'dashboard' : 'login')}
         >
-          <div className="bg-cyan-500/10 p-2.5 rounded-lg text-cyan-400 border border-cyan-500/30 group-hover:border-cyan-400/60 transition-colors shadow-[0_0_15px_rgba(6,182,212,0.15)]">
-            <Waves className="w-5 h-5 text-cyan-400 animate-pulse" />
+          <div className="bg-sky-500/15 p-2.5 rounded-xl text-sky-400 border border-sky-500/30 group-hover:border-sky-400 transition-colors">
+            <Waves className="w-5 h-5 text-sky-400" />
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <span className="font-extrabold text-xl tracking-tight text-white font-mono uppercase">
-                RIP<span className="text-cyan-400">GUARD</span>
+              <span className="font-bold text-xl tracking-tight text-white">
+                Rip<span className="text-sky-400">Guard</span>
               </span>
-              <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 font-semibold tracking-wider">
-                TACTICAL OPS
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-300 border border-sky-500/20 font-medium">
+                Beach Safety AI
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-mono tracking-tight">
-              CVPR 2025 RipVIS Neural Surveillance Console
+            <p className="text-xs text-slate-400">
+              Automated Rip Current Detection &amp; Lifeguard Decision Support
             </p>
           </div>
         </div>
 
         {/* Navigation Tabs */}
-        <nav className="flex items-center space-x-1 sm:space-x-2">
+        <nav className="flex items-center space-x-2">
           {isLoggedIn ? (
             <>
               <button
                 onClick={() => setCurrentTab('dashboard')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center space-x-1.5 ${
-                  currentTab === 'dashboard'
-                    ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 shadow-[0_0_10px_rgba(6,182,212,0.2)]'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
+                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-1.5 ${
+                  currentTab === 'dashboard' || currentTab === 'detail'
+                    ? 'bg-slate-800 text-white border border-slate-700'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
                 }`}
               >
-                <Eye className="w-3.5 h-3.5" />
-                <span>SURVEILLANCE</span>
+                <Eye className="w-4 h-4" />
+                <span>Beach Videos</span>
               </button>
 
               <button
                 onClick={() => setCurrentTab('upload')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center space-x-1.5 ${
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all flex items-center space-x-1.5 ${
                   currentTab === 'upload'
-                    ? 'bg-cyan-500 text-slate-950 font-bold border border-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.4)]'
-                    : 'bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
+                    ? 'bg-sky-400 text-slate-950 shadow-lg shadow-sky-500/25'
+                    : 'bg-sky-500 text-slate-950 hover:bg-sky-400 shadow-md shadow-sky-500/15'
                 }`}
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>INGEST VIDEO</span>
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+                <span>Upload Video</span>
               </button>
 
               <button
                 onClick={() => setCurrentTab('benchmark')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center space-x-1.5 ${
+                className={`px-3.5 py-2 rounded-lg text-sm font-medium transition-all flex items-center space-x-1.5 ${
                   currentTab === 'benchmark'
-                    ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent'
+                    ? 'bg-slate-800 text-white border border-slate-700'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
                 }`}
               >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>AUDIT & BENCHMARK</span>
+                <BarChart3 className="w-4 h-4" />
+                <span>Model Accuracy</span>
               </button>
 
               <button
                 onClick={onLogout}
-                className="px-2.5 py-1.5 rounded-lg text-xs font-mono text-slate-500 hover:text-rose-400 hover:bg-rose-950/20 border border-transparent hover:border-rose-900/40 transition-all flex items-center"
-                title="Disconnect Operator"
+                className="p-2 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 transition-all flex items-center"
+                title="Sign Out"
               >
-                <LogOut className="w-3.5 h-3.5" />
+                <LogOut className="w-4 h-4" />
               </button>
             </>
           ) : (
             <>
               <button
                 onClick={() => setCurrentTab('benchmark')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-mono font-medium flex items-center space-x-1.5 transition-all ${
+                className={`px-3.5 py-2 rounded-lg text-sm font-medium flex items-center space-x-1.5 transition-all ${
                   currentTab === 'benchmark'
-                    ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                    ? 'bg-slate-800 text-white border border-slate-700'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
                 }`}
               >
-                <BarChart3 className="w-3.5 h-3.5" />
-                <span>PUBLIC BENCHMARK</span>
+                <BarChart3 className="w-4 h-4" />
+                <span>Model Accuracy</span>
               </button>
               <button
                 onClick={() => setCurrentTab('login')}
-                className="px-3.5 py-1.5 rounded-lg text-xs font-mono font-semibold bg-cyan-500 text-slate-950 hover:bg-cyan-400 transition-all shadow-[0_0_15px_rgba(6,182,212,0.3)]"
+                className="px-4 py-2 rounded-lg text-sm font-semibold bg-sky-500 text-slate-950 hover:bg-sky-400 transition-all"
               >
-                OPERATOR LOGIN
+                Sign In
               </button>
             </>
           )}
@@ -112,12 +112,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, isLog
 
 export const DisclaimerBanner: React.FC = () => {
   return (
-    <div className="bg-amber-950/30 border border-amber-600/30 rounded-xl p-3.5 flex items-start space-x-3 text-amber-300/90 font-mono text-xs shadow-sm">
-      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-      <div className="leading-relaxed">
-        <span className="font-bold text-amber-400 uppercase tracking-wider">Operational Directive: </span>
-        RipGuard is a tactical computer vision decision-support prototype evaluated against the CVPR 2025 RipVIS dataset. Rip current boundary dynamics are inherently fluid and non-rigid. Always confirm detections with qualified human lifeguard observation before dispatching waterborne rescue.
-      </div>
+    <div className="bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-3 flex items-center space-x-3 text-slate-300 text-xs">
+      <Info className="w-4 h-4 text-sky-400 shrink-0" />
+      <span>
+        <strong>Safety Note:</strong> RipGuard highlights rip current channels directly on beach footage to assist lifeguards and coastal observers. Always verify water conditions on site.
+      </span>
     </div>
   );
 };

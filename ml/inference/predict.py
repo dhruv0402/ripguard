@@ -119,19 +119,22 @@ def _preprocess_frame(frame: np.ndarray, prev_frame: np.ndarray | None = None, i
 
 
 def _mask_to_region(mask: np.ndarray, threshold: float = 0.5) -> dict | None:
-    """Collapses a predicted mask into a normalized bounding region for the
-    `detections` table — a lightweight summary, not the full mask (the full
-    annotated video carries the actual pixel-level overlay)."""
+    """Finds the primary (largest) rip current channel contour and returns its
+    normalized bounding box."""
     binary = (mask > threshold).astype(np.uint8)
-    ys, xs = np.where(binary > 0)
-    if len(xs) == 0:
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
         return None
+    largest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(largest) < 100:
+        return None
+    x, y, bw, bh = cv2.boundingRect(largest)
     h, w = mask.shape
     return {
-        "x": float(xs.min() / w),
-        "y": float(ys.min() / h),
-        "w": float((xs.max() - xs.min()) / w),
-        "h": float((ys.max() - ys.min()) / h),
+        "x": round(float(x / w), 4),
+        "y": round(float(y / h), 4),
+        "w": round(float(bw / w), 4),
+        "h": round(float(bh / h), 4),
     }
 
 

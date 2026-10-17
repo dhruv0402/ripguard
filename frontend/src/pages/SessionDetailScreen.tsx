@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { apiFetch, getVideoUrl, AnalysisSession } from '../api';
 import { DisclaimerBanner } from '../components/Navbar';
-import { ArrowLeft, Clock, AlertTriangle, ShieldCheck, CheckCircle2, AlertCircle, Play, Pause, RefreshCw, Crosshair, Waves, Activity, Radio, MapPin, Gauge } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, ShieldCheck, AlertCircle, Play, RefreshCw, Radio, MapPin, CheckCircle2 } from 'lucide-react';
 
 interface SessionDetailScreenProps {
   sessionId: string;
@@ -14,7 +14,6 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const [liveTelemetry, setLiveTelemetry] = useState<{
@@ -26,7 +25,6 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
     region: { x: number; y: number; w: number; h: number } | null;
     timeline_so_far: { t: number; confidence: number; region?: { x: number; y: number; w: number; h: number } | null }[];
   } | null>(null);
-  const [showHudReticle, setShowHudReticle] = useState(true);
 
   const fetchSession = async () => {
     try {
@@ -34,7 +32,7 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
       setSession(data);
       setLoading(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to fetch session detail');
+      setError(err.message || 'Failed to load video analysis');
       setLoading(false);
     }
   };
@@ -67,7 +65,7 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
   };
 
   const handleLoadedMetadata = () => {
-    if (videoRef.current) {
+    if (videoRef.current && videoRef.current.duration && isFinite(videoRef.current.duration)) {
       setDuration(videoRef.current.duration);
     }
   };
@@ -76,15 +74,14 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
     if (videoRef.current) {
       videoRef.current.currentTime = timestampSec;
       videoRef.current.play();
-      setIsPlaying(true);
     }
   };
 
   if (loading && !session) {
     return (
-      <div className="p-16 text-center text-slate-400 font-mono space-y-3">
-        <RefreshCw className="w-8 h-8 animate-spin mx-auto text-cyan-400" />
-        <p className="text-xs uppercase tracking-wider">Acquiring surveillance session telemetry {sessionId}...</p>
+      <div className="p-16 text-center text-slate-400 space-y-3">
+        <RefreshCw className="w-8 h-8 animate-spin mx-auto text-sky-400" />
+        <p className="text-sm">Loading video analysis...</p>
       </div>
     );
   }
@@ -92,11 +89,11 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
   if (error || !session) {
     return (
       <div className="space-y-4 max-w-4xl mx-auto">
-        <button onClick={onBack} className="inline-flex items-center text-xs font-mono text-slate-400 hover:text-white">
-          <ArrowLeft className="w-4 h-4 mr-1.5" /> Return to Surveillance Deck
+        <button onClick={onBack} className="inline-flex items-center text-sm text-slate-400 hover:text-white">
+          <ArrowLeft className="w-4 h-4 mr-1.5" /> Back to Videos
         </button>
-        <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300 font-mono text-xs">
-          {error || 'Session not found in telemetry registry'}
+        <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-300 text-sm">
+          {error || 'Video session not found'}
         </div>
       </div>
     );
@@ -106,160 +103,144 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
   const timeline = isProcessing && liveTelemetry?.timeline_so_far?.length
     ? liveTelemetry.timeline_so_far
     : (session.risk_timeline || []);
-  const maxConfidence = timeline.length > 0 ? Math.max(...timeline.map((p) => p.confidence)) : (liveTelemetry?.confidence || 0);
+  const maxConfidence = timeline.length > 0
+    ? Math.min(0.985, Math.max(...timeline.map((p) => p.confidence)))
+    : (liveTelemetry?.confidence || 0);
   const detections = session.detections || [];
+  const effectiveDuration = duration > 0
+    ? duration
+    : (timeline.length > 0 ? timeline[timeline.length - 1].t : 0);
+
+  const effectiveRisk = session.overall_risk_level || (maxConfidence >= 0.7 ? 'high' : maxConfidence >= 0.4 ? 'medium' : 'low');
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-cyan-950/60">
+    <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Top Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
         <div className="flex items-center space-x-3">
           <button
             onClick={onBack}
-            className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-cyan-500/40 transition-all"
-            title="Back to Dashboard"
+            className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all flex items-center space-x-1.5 text-sm font-medium"
           >
             <ArrowLeft className="w-4 h-4" />
+            <span>Back</span>
           </button>
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="font-mono text-xs text-cyan-400 uppercase font-semibold">INCIDENT ANALYSIS</span>
-              <span className="text-slate-600">/</span>
-              <span className="font-mono text-xs text-slate-400 truncate max-w-xs">{session.filename}</span>
-            </div>
-            <h1 className="text-xl font-bold font-mono text-white tracking-tight mt-0.5">
-              Rip Current Tracking & Telemetry Session
+            <h1 className="text-xl font-bold text-white tracking-tight">
+              {session.filename}
             </h1>
+            {session.location_label && (
+              <p className="text-xs text-slate-400 flex items-center mt-0.5">
+                <MapPin className="w-3.5 h-3.5 mr-1 text-sky-400" />
+                {session.location_label}
+              </p>
+            )}
           </div>
-        </div>
-
-        <div className="flex items-center space-x-3 text-xs font-mono">
-          <button
-            onClick={() => setShowHudReticle((v) => !v)}
-            className={`px-2.5 py-1 rounded border transition-all ${
-              showHudReticle
-                ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
-                : 'bg-slate-900 text-slate-400 border-slate-800'
-            }`}
-          >
-            HUD RETICLE: <strong>{showHudReticle ? 'ON' : 'OFF'}</strong>
-          </button>
-          <span className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-400">
-            LOC: <strong className="text-slate-200">{session.location_label || 'COASTAL SITE #1'}</strong>
-          </span>
-          <span className="px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-400">
-            UUID: <strong className="text-slate-200">{session.id.substring(0, 8)}...</strong>
-          </span>
         </div>
       </div>
 
-      {/* Mandatory Disclaimer */}
-      <DisclaimerBanner />
-
-      {/* Failed State */}
+      {/* Rejected / Failed Video State */}
       {session.status === 'failed' && (
-        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-8 text-center space-y-4 shadow-2xl">
-          <div className="space-y-3 max-w-lg mx-auto">
-            <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/20">
-              <AlertCircle className="w-6 h-6" />
-            </div>
-            <h3 className="text-base font-bold font-mono text-white uppercase">Inference Aborted / Validation Rejected</h3>
-            <p className="text-xs font-mono text-rose-300 leading-relaxed bg-rose-950/30 p-3 rounded-lg border border-rose-500/20">
-              {session.error_message || 'Inference pipeline error or Out-of-Distribution rejection.'}
-            </p>
+        <div className="bg-slate-900 border border-rose-500/30 rounded-2xl p-8 text-center space-y-4">
+          <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/20">
+            <AlertCircle className="w-6 h-6" />
           </div>
+          <h2 className="text-lg font-bold text-white">Video Rejected: Not a Beach or Ocean Video</h2>
+          <p className="text-sm text-rose-300 max-w-xl mx-auto bg-rose-950/30 p-4 rounded-xl border border-rose-500/20">
+            {session.error_message || 'This file does not appear to be coastal surf footage. Please upload a beach or ocean video.'}
+          </p>
         </div>
       )}
 
-      {/* Live Ingestion Progress Banner while Processing */}
+      {/* Live Processing Progress Banner */}
       {isProcessing && (
-        <div className="bg-cyan-950/30 border border-cyan-500/40 rounded-xl p-4 space-y-2 shadow-lg">
-          <div className="flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center space-x-2 text-cyan-300 font-bold uppercase">
+        <div className="bg-sky-950/40 border border-sky-500/40 rounded-xl p-4 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center space-x-2 text-sky-300 font-semibold">
               <Radio className="w-4 h-4 text-rose-400 animate-pulse" />
-              <span>LIVE INGESTION DETECTION ACTIVE — STREAMING ANNOTATED FRAMES IN REAL TIME</span>
+              <span>Analyzing Video Live — Detecting Rip Currents Frame by Frame...</span>
             </div>
-            <div className="text-cyan-400 font-bold">
+            <div className="text-sky-300 font-mono text-xs font-bold">
               {liveTelemetry
-                ? `Frame ${liveTelemetry.frame_idx} / ${liveTelemetry.total_frames} (${liveTelemetry.progress_pct}%)`
-                : 'Initializing DeepLabV3+ & Optical Flow...'}
+                ? `Frame ${liveTelemetry.frame_idx} of ${liveTelemetry.total_frames} (${liveTelemetry.progress_pct}%)`
+                : 'Starting detector...'}
             </div>
           </div>
           <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
             <div
-              className="bg-cyan-400 h-2 transition-all duration-300"
+              className="bg-sky-400 h-2 transition-all duration-300"
               style={{ width: `${liveTelemetry?.progress_pct || 5}%` }}
             />
           </div>
         </div>
       )}
 
-      {/* Main Analysis & Live Detection View (Shown both during Live Processing and when Done) */}
+      {/* Main Content when Processing or Done */}
       {(session.status === 'done' || isProcessing) && (
         <div className="space-y-6">
-          {/* Quick Metrics Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-            <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-              <div className="text-[10px] font-mono uppercase text-slate-400">Target Risk Classification</div>
-              <div className="mt-1 flex items-center space-x-2">
-                <span
-                  className={`text-xl font-bold font-mono uppercase ${
-                    (session.overall_risk_level === 'high' || (isProcessing && maxConfidence >= 0.7))
-                      ? 'text-rose-400'
-                      : (session.overall_risk_level === 'medium' || (isProcessing && maxConfidence >= 0.4))
-                      ? 'text-amber-400'
-                      : 'text-emerald-400'
-                  }`}
-                >
-                  {session.overall_risk_level || (maxConfidence >= 0.7 ? 'HIGH' : maxConfidence >= 0.4 ? 'MEDIUM' : 'LOW')}
-                </span>
-                <span className="text-xs font-mono text-slate-500">
-                  ({(maxConfidence * 100).toFixed(1)}% PEAK)
-                </span>
+          {/* Plain-English Safety Result Banner */}
+          {effectiveRisk === 'high' ? (
+            <div className="bg-rose-950/40 border border-rose-500/40 rounded-2xl p-5 flex items-start space-x-4">
+              <div className="p-3 rounded-xl bg-rose-500/20 text-rose-400 shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-rose-300">
+                  DANGER: Strong Rip Current Detected ({(maxConfidence * 100).toFixed(1)}% Confidence)
+                </h2>
+                <p className="text-sm text-slate-300 mt-1">
+                  A hazardous outward-flowing rip current channel was detected in this video (highlighted in <strong className="text-rose-300">red</strong> with a <strong className="text-amber-300">yellow outline</strong> on the video below). Swimming in this channel is dangerous.
+                </p>
               </div>
             </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-              <div className="text-[10px] font-mono uppercase text-slate-400">Flagged Risk Intervals</div>
-              <div className="mt-1 text-xl font-bold font-mono text-white">
-                {detections.length} <span className="text-xs font-normal text-slate-400 font-mono">intervals</span>
+          ) : effectiveRisk === 'medium' ? (
+            <div className="bg-amber-950/40 border border-amber-500/40 rounded-2xl p-5 flex items-start space-x-4">
+              <div className="p-3 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-amber-300">
+                  CAUTION: Moderate Rip Current Activity ({(maxConfidence * 100).toFixed(1)}% Confidence)
+                </h2>
+                <p className="text-sm text-slate-300 mt-1">
+                  A moderate offshore current channel was detected in the surf zone (outlined in <strong className="text-amber-300">yellow/red</strong> on the video below). Lifeguards should monitor swimmers near this area.
+                </p>
               </div>
             </div>
-
-            <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-              <div className="text-[10px] font-mono uppercase text-slate-400">Motion Tracking Algorithm</div>
-              <div className="mt-1 text-sm font-bold font-mono text-cyan-400 flex items-center">
-                <Waves className="w-4 h-4 mr-1.5" />
-                DeepLabV3+ &amp; Farnebäck (5-Ch)
+          ) : (
+            <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-2xl p-5 flex items-start space-x-4">
+              <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-emerald-300">
+                  SAFE WATER CONDITIONS: No Rip Current Detected
+                </h2>
+                <p className="text-sm text-slate-300 mt-1">
+                  Waves are breaking uniformly toward the shore with no hazardous rip current channels detected.
+                </p>
               </div>
             </div>
+          )}
 
-            <div className="bg-slate-900/80 border border-slate-800 p-4 rounded-xl">
-              <div className="text-[10px] font-mono uppercase text-slate-400">Filter Aggregation</div>
-              <div className="mt-1 text-sm font-bold font-mono text-emerald-400 flex items-center">
-                <Gauge className="w-4 h-4 mr-1.5" />
-                Vorticity + Rolling Median TCA
-              </div>
-            </div>
-          </div>
-
-          {/* Tactical Split Deck: Left 65% Video Player / Right 35% Live Telemetry */}
+          {/* Video Player + Simple Summary Sidebar */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left Column: Player & Timeline */}
+            {/* Left 8 Columns: Unobstructed Video Player + Visual Legend + Timeline */}
             <div className="lg:col-span-8 space-y-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative">
-                <div className="relative bg-black aspect-video flex items-center justify-center overflow-hidden">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+                {/* Clean Video Player — No blurry boxes blocking the video */}
+                <div className="relative bg-black aspect-video flex items-center justify-center">
                   {isProcessing ? (
                     <img
                       src={`/api/sessions/${session.id}/live-feed`}
-                      alt="Live rip current detection on ingested video"
+                      alt="Live rip current detection on uploaded video"
                       className="w-full h-full object-contain"
                     />
                   ) : (
                     <video
                       key={session.annotated_video_path || session.id}
                       ref={videoRef}
-                      src={getVideoUrl(session.id)}
+                      src={`${getVideoUrl(session.id)}?v=${encodeURIComponent(session.annotated_video_path || session.id)}`}
                       controls
                       autoPlay
                       loop
@@ -267,133 +248,61 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                       playsInline
                       onTimeUpdate={handleTimeUpdate}
                       onLoadedMetadata={handleLoadedMetadata}
-                      onPlay={() => setIsPlaying(true)}
-                      onPause={() => setIsPlaying(false)}
                       className="w-full h-full object-contain"
                     />
                   )}
-
-                  {/* Dynamic Tactical HUD Overlay */}
-                  {(() => {
-                    const activeTime = isProcessing ? (liveTelemetry?.t || 0) : currentTime;
-                    const activeDetection = detections.find(
-                      (d) => activeTime >= d.start_timestamp_sec && activeTime <= d.end_timestamp_sec
-                    );
-                    const nearestPoint = timeline.reduce((prev, curr) => {
-                      return Math.abs(curr.t - activeTime) < Math.abs(prev.t - activeTime) ? curr : prev;
-                    }, timeline[0] || { t: 0, confidence: 0, region: null });
-
-                    const activeConfidence = isProcessing && liveTelemetry
-                      ? liveTelemetry.confidence
-                      : nearestPoint
-                      ? nearestPoint.confidence
-                      : activeDetection
-                      ? activeDetection.confidence
-                      : 0;
-
-                    const isHigh = activeConfidence >= 0.7;
-                    const isMed = activeConfidence >= 0.4 && activeConfidence < 0.7;
-                    const region = isProcessing
-                      ? liveTelemetry?.region
-                      : (nearestPoint?.region || (activeConfidence >= 0.5 ? activeDetection?.bounding_region : null));
-
-                    return (
-                      <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between">
-                        {/* Top HUD Row */}
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2 bg-slate-950/90 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
-                            <span className="flex h-2 w-2 relative">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-                            </span>
-                            <span className="text-slate-300 font-bold uppercase tracking-wider">
-                              {isProcessing ? 'LIVE INGESTION HUD' : 'TACTICAL HUD'}
-                            </span>
-                            <span className="text-slate-600">|</span>
-                            <span className="text-cyan-400">{activeTime.toFixed(1)}s</span>
-                          </div>
-
-                          <div className="flex items-center space-x-2 bg-slate-950/90 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800 text-xs font-mono">
-                            <span className="text-slate-400">SURF STATE:</span>
-                            <span
-                              className={`font-bold px-2 py-0.5 rounded ${
-                                isHigh
-                                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse'
-                                  : isMed
-                                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                                  : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                              }`}
-                            >
-                              {isHigh ? 'CRITICAL RIP CURRENT' : isMed ? 'ELEVATED SURF' : 'NORMAL WATER'}
-                            </span>
-                            <span className="text-white font-bold">{(activeConfidence * 100).toFixed(1)}%</span>
-                          </div>
-                        </div>
-
-                        {/* Bounding Box Reticle */}
-                        {showHudReticle && region && activeConfidence >= 0.45 && (
-                          <div
-                            className="absolute border-2 border-dashed border-rose-500 rounded bg-rose-500/15 backdrop-blur-[1px] transition-all duration-150 shadow-[0_0_20px_rgba(244,63,94,0.5)]"
-                            style={{
-                              left: `${Math.max(2, Math.min(92, region.x * 100))}%`,
-                              top: `${Math.max(8, Math.min(88, region.y * 100))}%`,
-                              width: `${Math.max(10, Math.min(90, region.w * 100))}%`,
-                              height: `${Math.max(10, Math.min(85, region.h * 100))}%`,
-                            }}
-                          >
-                            <div className="absolute -top-6 left-0 bg-rose-600 text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow flex items-center space-x-1 whitespace-nowrap">
-                              <Crosshair className="w-3 h-3" />
-                              <span>TARGET CORRIDOR [{(activeConfidence * 100).toFixed(1)}%]</span>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Bottom Reticle */}
-                        <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 bg-slate-950/80 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-800 mb-8">
-                          <div className="flex items-center space-x-2">
-                            <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                            <span>DEEPLABV3+ &amp; FARNEBÄCK VORTICITY TRACKER ACTIVE</span>
-                          </div>
-                          <div>
-                            CORRIDOR CONFIDENCE: <strong className="text-cyan-400">{(activeConfidence * 100).toFixed(1)}%</strong>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
 
-                {/* Interactive Seekbar Timeline */}
-                <div className="p-4 border-t border-slate-800 space-y-3 bg-slate-950/60">
-                  <div className="flex items-center justify-between font-mono text-xs">
+                {/* Simple Visual Guide explaining what is drawn on the video */}
+                <div className="px-4 py-3 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
+                  <div className="font-semibold text-slate-400">What You See on the Video:</div>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <span className="flex items-center">
+                      <span className="w-3 h-3 rounded-sm bg-rose-600 border border-yellow-400 mr-1.5" />
+                      <strong>Red Zone / Yellow Outline:</strong> Rip Current Channel
+                    </span>
+                    <span className="flex items-center">
+                      <span className="w-3 h-0.5 bg-cyan-400 mr-1.5" />
+                      <strong>Cyan Arrows:</strong> Normal Wave Direction
+                    </span>
+                    <span className="flex items-center">
+                      <span className="w-3 h-0.5 bg-rose-500 mr-1.5" />
+                      <strong>Red Arrows:</strong> Outward Rip Current Flow
+                    </span>
+                  </div>
+                </div>
+
+                {/* Clickable Detection Timeline */}
+                <div className="p-4 border-t border-slate-800 space-y-2.5 bg-slate-900/60">
+                  <div className="flex items-center justify-between text-xs">
                     <div>
-                      <span className="font-bold text-slate-200">Temporal Risk Distribution</span>
-                      <span className="text-slate-500 ml-2">(Click bars to scrub video)</span>
+                      <span className="font-semibold text-white">Second-by-Second Rip Current Risk</span>
+                      <span className="text-slate-400 ml-2">(Click any bar to jump to that moment in the video)</span>
                     </div>
-                    <div className="text-cyan-400">
-                      {currentTime.toFixed(1)}s / {duration.toFixed(1)}s
+                    <div className="font-mono text-sky-400 font-semibold">
+                      {currentTime.toFixed(1)}s / {effectiveDuration.toFixed(1)}s
                     </div>
                   </div>
 
-                  <div className="relative h-14 bg-slate-950 border border-slate-800 rounded-lg overflow-hidden flex items-end px-1 py-1">
-                    {duration > 0 && (
+                  <div className="relative h-12 bg-slate-950 border border-slate-800 rounded-lg overflow-hidden flex items-end px-1 py-1">
+                    {effectiveDuration > 0 && (
                       <div
-                        className="absolute top-0 bottom-0 w-0.5 bg-cyan-400 z-10 shadow-[0_0_10px_rgba(6,182,212,1)]"
-                        style={{ left: `${(currentTime / duration) * 100}%` }}
+                        className="absolute top-0 bottom-0 w-0.5 bg-sky-400 z-10"
+                        style={{ left: `${Math.min(100, (currentTime / effectiveDuration) * 100)}%` }}
                       />
                     )}
 
                     {timeline.map((point, idx) => {
                       const isHigh = point.confidence >= 0.7;
                       const isMed = point.confidence >= 0.4 && point.confidence < 0.7;
-                      const heightPercent = Math.max(10, point.confidence * 100);
+                      const heightPercent = Math.max(12, Math.min(98, point.confidence * 100));
 
                       return (
                         <div
                           key={idx}
                           onClick={() => jumpToTime(point.t)}
-                          title={`t=${point.t}s | Confidence: ${(point.confidence * 100).toFixed(1)}%`}
-                          className="flex-1 mx-0.5 cursor-pointer group flex flex-col justify-end h-full"
+                          title={`Time: ${point.t}s | Rip Current Confidence: ${(point.confidence * 100).toFixed(1)}%`}
+                          className="flex-1 mx-[1px] cursor-pointer group flex flex-col justify-end h-full"
                         >
                           <div
                             style={{ height: `${heightPercent}%` }}
@@ -410,94 +319,99 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                     })}
                   </div>
 
-                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 pt-1">
+                  <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
                     <span className="flex items-center">
-                      <span className="w-2 h-2 rounded-full bg-rose-500 mr-1.5" /> High (≥70%)
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 mr-1.5" /> Strong Rip Current (High Risk)
                     </span>
                     <span className="flex items-center">
-                      <span className="w-2 h-2 rounded-full bg-amber-500 mr-1.5" /> Medium (40-69%)
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 mr-1.5" /> Moderate Current (Caution)
                     </span>
                     <span className="flex items-center">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5" /> Low (&lt;40%)
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-1.5" /> Calm / Safe Surf
                     </span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Right Column: Diagnostic Deck & Flagged Windows */}
+            {/* Right 4 Columns: Plain-English Summary & Timestamps */}
             <div className="lg:col-span-4 space-y-4">
-              {/* Surveillance Diagnostic Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-                <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
-                  <span>Diagnostic Telemetry</span>
-                  <Activity className="w-4 h-4 text-cyan-400" />
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+                <h3 className="text-sm font-bold text-white">
+                  Analysis Summary
                 </h3>
 
-                <div className="space-y-3 font-mono text-xs">
-                  <div>
-                    <div className="flex justify-between text-slate-400 mb-1">
-                      <span>Max Peak Confidence:</span>
-                      <span className="text-white font-bold">{(maxConfidence * 100).toFixed(1)}%</span>
-                    </div>
-                    <div className="w-full bg-slate-950 rounded-full h-1.5">
-                      <div
-                        className={`h-1.5 rounded-full ${
-                          maxConfidence >= 0.7 ? 'bg-rose-500' : maxConfidence >= 0.4 ? 'bg-amber-400' : 'bg-emerald-400'
-                        }`}
-                        style={{ width: `${Math.min(100, maxConfidence * 100)}%` }}
-                      />
-                    </div>
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between items-center py-2 border-b border-slate-800">
+                    <span className="text-slate-400">Safety Assessment</span>
+                    <span
+                      className={`font-bold ${
+                        effectiveRisk === 'high'
+                          ? 'text-rose-400'
+                          : effectiveRisk === 'medium'
+                          ? 'text-amber-400'
+                          : 'text-emerald-400'
+                      }`}
+                    >
+                      {effectiveRisk === 'high'
+                        ? 'Danger (High Risk)'
+                        : effectiveRisk === 'medium'
+                        ? 'Caution (Moderate)'
+                        : 'Safe (Low Risk)'}
+                    </span>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-800 flex justify-between">
-                    <span className="text-slate-400">Coastal Domain Check:</span>
-                    <span className="text-emerald-400 font-bold">VERIFIED FLUID SURF</span>
+                  <div className="flex justify-between items-center py-2 border-b border-slate-800">
+                    <span className="text-slate-400">Detection Confidence</span>
+                    <span className="text-white font-bold">{(maxConfidence * 100).toFixed(1)}%</span>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-800 flex justify-between">
-                    <span className="text-slate-400">Total Analyzed Duration:</span>
-                    <span className="text-slate-200">{duration.toFixed(1)} seconds</span>
+                  <div className="flex justify-between items-center py-2 border-b border-slate-800">
+                    <span className="text-slate-400">Video Length</span>
+                    <span className="text-slate-200">{effectiveDuration.toFixed(1)} seconds</span>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-800 flex justify-between">
-                    <span className="text-slate-400">Execution Runtime:</span>
-                    <span className="text-slate-200">ONNX CoreML / MPS Edge</span>
+                  <div className="flex justify-between items-center py-2">
+                    <span className="text-slate-400">Beach Verification</span>
+                    <span className="text-emerald-400 font-medium flex items-center">
+                      <CheckCircle2 className="w-4 h-4 mr-1" />
+                      Verified Beach Video
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Flagged Windows */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-                <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300 flex items-center justify-between">
-                  <span>Flagged Current Intervals ({detections.length})</span>
-                  <Crosshair className="w-4 h-4 text-rose-400" />
+              {/* Detected Time Windows */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <h3 className="text-sm font-bold text-white">
+                  When Rip Currents Appear ({detections.length})
                 </h3>
 
                 {detections.length === 0 ? (
-                  <p className="text-xs font-mono text-slate-500 italic py-2">
-                    No sustained rip current windows detected above threshold.
+                  <p className="text-xs text-slate-400 py-2">
+                    No dangerous rip currents were detected in this video.
                   </p>
                 ) : (
-                  <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                  <div className="space-y-2.5">
                     {detections.map((det, index) => (
                       <div
                         key={det.id || index}
-                        className="p-3 rounded-lg bg-slate-950 border border-slate-800 hover:border-cyan-500/40 transition-all font-mono text-xs flex items-center justify-between"
+                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between"
                       >
                         <div>
-                          <div className="font-bold text-slate-200">
-                            INTERVAL #{index + 1}: {det.start_timestamp_sec.toFixed(1)}s - {det.end_timestamp_sec.toFixed(1)}s
+                          <div className="font-semibold text-sm text-white">
+                            {det.start_timestamp_sec.toFixed(1)}s – {det.end_timestamp_sec.toFixed(1)}s
                           </div>
-                          <div className="text-[11px] text-rose-400 mt-0.5">
-                            Confidence: {(det.confidence * 100).toFixed(1)}%
+                          <div className="text-xs text-rose-400 mt-0.5">
+                            Rip Current Confidence: {(Math.min(0.985, det.confidence) * 100).toFixed(1)}%
                           </div>
                         </div>
                         <button
                           onClick={() => jumpToTime(det.start_timestamp_sec)}
-                          className="px-2.5 py-1 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[11px] hover:bg-cyan-500/25 transition-all font-bold"
+                          className="px-3 py-1.5 rounded-lg bg-sky-500/15 text-sky-300 border border-sky-500/30 text-xs hover:bg-sky-500 hover:text-slate-950 transition-all font-semibold flex items-center space-x-1"
                         >
-                          SEEK
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>Play</span>
                         </button>
                       </div>
                     ))}
@@ -508,6 +422,8 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
           </div>
         </div>
       )}
+
+      <DisclaimerBanner />
     </div>
   );
 };
