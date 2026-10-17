@@ -64,10 +64,15 @@ async def process_video(session_id: uuid.UUID, session_maker=None) -> None:
             session.annotated_video_path = inference_result["annotated_video_path"]
             session.risk_timeline = inference_result["risk_timeline"]
 
-            max_confidence = max(
-                (p["confidence"] for p in inference_result["risk_timeline"]), default=0.0
-            )
-            session.overall_risk_level = _derive_risk_level(max_confidence)
+            confs = sorted(p["confidence"] for p in inference_result["risk_timeline"])
+            if not confs:
+                sustained_confidence = 0.0
+            elif len(confs) < 5:
+                sustained_confidence = confs[-1]
+            else:
+                idx_p90 = min(len(confs) - 1, int(0.90 * len(confs)))
+                sustained_confidence = confs[idx_p90]
+            session.overall_risk_level = _derive_risk_level(sustained_confidence)
 
             for det in inference_result["detections"]:
                 db.add(
@@ -81,9 +86,12 @@ async def process_video(session_id: uuid.UUID, session_maker=None) -> None:
                 )
 
             session.status = SessionStatus.DONE
+            session.error_message = None
 
         except Exception as e:  # noqa: BLE001 — any inference failure marks the job failed, doesn't crash the worker
             session.status = SessionStatus.FAILED
             session.error_message = str(e)
+            session.overall_risk_level = None
+            session.risk_timeline = None
 
         await db.commit()
