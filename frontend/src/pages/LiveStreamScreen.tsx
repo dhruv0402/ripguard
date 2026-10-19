@@ -251,6 +251,60 @@ export const LiveStreamScreen: React.FC = () => {
             </form>
           </div>
 
+          {/* Tower Calibration & Edge Hardware Acceleration */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
+            <h2 className="text-sm font-semibold text-white tracking-wide uppercase flex items-center justify-between">
+              <span>Tower & Edge Hardware</span>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                Jetson Orin Ready
+              </span>
+            </h2>
+
+            <div className="space-y-2 text-xs">
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
+                <div className="flex items-center justify-between text-slate-300 font-semibold">
+                  <span>Camera Tower Calibration</span>
+                  <span className="text-[10px] text-sky-400 font-mono">4-GCP Survey</span>
+                </div>
+                <div className="text-slate-400 text-[11px] space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>Mounting Height (h):</span>
+                    <span className="text-slate-200 font-mono">12.0m</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Depression Tilt (θ):</span>
+                    <span className="text-slate-200 font-mono">16.5°</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Planar Homography:</span>
+                    <span className="text-emerald-400 font-medium">RTK Certified (RMSE &lt; 0.5m)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
+                <div className="flex items-center justify-between text-slate-300 font-semibold">
+                  <span>Edge Node Accelerator</span>
+                  <span className="text-[10px] text-emerald-400 font-mono">TensorRT FP16</span>
+                </div>
+                <div className="text-slate-400 text-[11px] space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>Target Hardware:</span>
+                    <span className="text-slate-200">Jetson Orin Nano / NX</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Power Budget:</span>
+                    <span className="text-emerald-400 font-mono">&lt; 20W (15.2W Mode)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Inference Throughput:</span>
+                    <span className="text-emerald-400 font-mono">≥ 30 FPS Sustained</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl p-4 text-xs text-slate-400 space-y-2">
             <div className="font-semibold text-slate-300 flex items-center space-x-1.5">
               <Camera className="w-4 h-4 text-sky-400" />

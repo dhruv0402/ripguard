@@ -167,4 +167,30 @@ export async function getActiveLearningManifest(sessionId: string): Promise<any>
   return apiFetch(`/api/sessions/${sessionId}/active-learning-manifest`);
 }
 
+export async function getStreamCalibration(source?: string): Promise<any> {
+  const q = source ? `?source=${encodeURIComponent(source)}` : '';
+  return apiFetch(`/api/stream/calibration${q}`);
+}
+
+export async function calibrateStreamCamera(payload: any): Promise<any> {
+  return apiFetch('/api/stream/calibration', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function projectStreamCoordinate(payload: any): Promise<any> {
+  return apiFetch('/api/stream/calibration/project', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getHardwareEdgeStatus(): Promise<any> {
+  return apiFetch('/api/stream/hardware');
+}
+
+
 
