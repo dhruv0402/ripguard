@@ -41,6 +41,7 @@ ml/checkpoints/*.onnx.data
 ml/checkpoints/*.engine
 ml/checkpoints/*.trt
 !ml/checkpoints/.gitkeep
+HAT_REPORT.json
 
 # Environment configs
 .env

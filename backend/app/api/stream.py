@@ -499,5 +499,209 @@ async def update_environmental_tide(
     return {"status": "updated", "tide": status}
 
 
+# ==============================================================================
+# PTZ Dynamic Homography, CPL Filter Actuation, Domain Adapter & CAD Dispatch
+# ==============================================================================
+
+try:
+    from ml.inference.ptz_controller import PTZController
+    from ml.inference.cpl_actuator import CPLActuator
+    from ml.active_learning.domain_adapter import CoastalDomainAdapter, BeachArchetype
+    from ml.inference.hardware_acceptance import HardwareAcceptanceTester
+except ImportError:
+    try:
+        from inference.ptz_controller import PTZController
+        from inference.cpl_actuator import CPLActuator
+        from active_learning.domain_adapter import CoastalDomainAdapter, BeachArchetype
+        from inference.hardware_acceptance import HardwareAcceptanceTester
+    except ImportError:
+        PTZController = None
+        CPLActuator = None
+        CoastalDomainAdapter = None
+        BeachArchetype = None
+        HardwareAcceptanceTester = None
+
+from app.services.cad_dispatch import default_cad_dispatcher
+
+default_ptz_controller = PTZController() if PTZController else None
+default_cpl_actuator = CPLActuator() if CPLActuator else None
+default_domain_adapter = CoastalDomainAdapter() if CoastalDomainAdapter else None
+
+
+class PTZMovePayload(BaseModel):
+    pan_delta_deg: float = Field(0.0, description="Relative pan in degrees")
+    tilt_delta_deg: float = Field(0.0, description="Relative tilt in degrees")
+    zoom_ratio: float = Field(1.0, description="Optical zoom multiplier (1.0 = standard)")
+    reset_to_home: bool = Field(False, description="Whether to command return to calibrated Home preset")
+
+
+class CPLActuatePayload(BaseModel):
+    target_angle_deg: Optional[float] = Field(None, description="Target angle in [0, 180]")
+    auto_glint_extinguish: bool = Field(False, description="Whether to automatically extinguish glare based on solar azimuth")
+    solar_azimuth_deg: float = Field(180.0, description="Sun compass azimuth in degrees")
+
+
+class DomainConfigPayload(BaseModel):
+    archetype: Optional[str] = Field(None, description="Beach archetype (GOLDEN_QUARTZ, VOLCANIC_BLACK, PEBBLE_SHINGLE, ESTUARINE_TURBID)")
+    shadow_mode: Optional[bool] = Field(None, description="Enable 14-day shadow harvesting mode")
+
+
+class CADDispatchPayload(BaseModel):
+    alert_id: str = Field(..., description="Alert ID being forwarded to 911/CAD")
+    gps_lat: float = Field(15.5492, description="Latitude of corridor centroid")
+    gps_lon: float = Field(73.7535, description="Longitude of corridor centroid")
+    message: Optional[str] = Field(None, description="Custom dispatch message")
+
+
+@router.get("/ptz/status")
+async def get_ptz_status(user: User = Depends(get_current_user)):
+    """Returns PTZ camera position, return-to-home watchdog status, and dynamic homography state."""
+    if not default_ptz_controller:
+        raise HTTPException(status_code=500, detail="PTZ controller not available.")
+    watchdog = default_ptz_controller.check_home_preset_watchdog()
+    return {
+        "pan_deg": default_ptz_controller.current_pan_deg,
+        "tilt_deg": default_ptz_controller.current_tilt_deg,
+        "zoom_ratio": default_ptz_controller.current_zoom_ratio,
+        "is_at_home_preset": default_ptz_controller.is_at_home_preset,
+        "watchdog": watchdog,
+    }
+
+
+@router.post("/ptz/move")
+async def move_ptz_camera(
+    payload: PTZMovePayload,
+    user: User = Depends(get_current_user),
+):
+    """Updates PTZ camera orientation or commands return to calibrated Home preset."""
+    if not default_ptz_controller:
+        raise HTTPException(status_code=500, detail="PTZ controller not available.")
+
+    if payload.reset_to_home:
+        res = default_ptz_controller.command_goto_preset()
+    else:
+        default_ptz_controller.update_ptz_state(
+            pan_delta_deg=payload.pan_delta_deg,
+            tilt_delta_deg=payload.tilt_delta_deg,
+            zoom_ratio=payload.zoom_ratio,
+        )
+        res = {
+            "pan_deg": default_ptz_controller.current_pan_deg,
+            "tilt_deg": default_ptz_controller.current_tilt_deg,
+            "zoom_ratio": default_ptz_controller.current_zoom_ratio,
+            "is_at_home_preset": default_ptz_controller.is_at_home_preset,
+        }
+    return {"status": "success", "ptz": res}
+
+
+@router.get("/cpl/status")
+async def get_cpl_status(user: User = Depends(get_current_user)):
+    """Returns motorized Circular Polarizing (CPL) lens actuator telemetry."""
+    if not default_cpl_actuator:
+        raise HTTPException(status_code=500, detail="CPL actuator not available.")
+    return default_cpl_actuator.get_status()
+
+
+@router.post("/cpl/actuate")
+async def actuate_cpl_polarizer(
+    payload: CPLActuatePayload,
+    user: User = Depends(get_current_user),
+):
+    """Rotates physical motorized CPL filter glass to extinguish ocean sun glint."""
+    if not default_cpl_actuator:
+        raise HTTPException(status_code=500, detail="CPL actuator not available.")
+
+    if payload.auto_glint_extinguish:
+        res = default_cpl_actuator.auto_adjust_for_glint(
+            requires_cpl=True,
+            solar_azimuth_deg=payload.solar_azimuth_deg,
+        )
+    elif payload.target_angle_deg is not None:
+        res = default_cpl_actuator.rotate_to_angle(payload.target_angle_deg)
+    else:
+        res = default_cpl_actuator.rotate_to_angle(0.0)
+
+    return {"status": "actuated", "result": res}
+
+
+@router.get("/domain/status")
+async def get_domain_status(user: User = Depends(get_current_user)):
+    """Returns coastal archetype adaptation (Black Sand, Estuary, Golden Sand) and shadow mode status."""
+    if not default_domain_adapter:
+        raise HTTPException(status_code=500, detail="Domain adapter not available.")
+    return {
+        "active_archetype": default_domain_adapter.active_archetype.value,
+        "shadow_mode_active": default_domain_adapter.shadow_mode,
+        "harvested_shadow_samples": default_domain_adapter.harvested_shadow_samples,
+        "thresholds": default_domain_adapter.ARCHETYPE_THRESHOLDS[default_domain_adapter.active_archetype],
+    }
+
+
+@router.post("/domain/configure")
+async def configure_domain_adapter(
+    payload: DomainConfigPayload,
+    user: User = Depends(get_current_user),
+):
+    """Configures beach archetype and 14-day shadow harvesting mode."""
+    if not default_domain_adapter:
+        raise HTTPException(status_code=500, detail="Domain adapter not available.")
+
+    if payload.archetype and BeachArchetype:
+        try:
+            default_domain_adapter.active_archetype = BeachArchetype(payload.archetype)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid archetype: {payload.archetype}")
+
+    if payload.shadow_mode is not None:
+        default_domain_adapter.shadow_mode = payload.shadow_mode
+
+    return {
+        "status": "configured",
+        "active_archetype": default_domain_adapter.active_archetype.value,
+        "shadow_mode_active": default_domain_adapter.shadow_mode,
+    }
+
+
+@router.post("/cad/dispatch")
+async def dispatch_incident_to_cad(
+    payload: CADDispatchPayload,
+    user: User = Depends(get_current_user),
+):
+    """Dispatches standard OASIS Common Alerting Protocol (CAP v1.2) XML to municipal 911 CAD centers."""
+    alert_meta = {
+        "id": payload.alert_id,
+        "message": payload.message or "Sustained high-velocity seaward rip current corridor.",
+        "is_escalated": True,
+        "confidence": 0.94,
+    }
+    incident = await default_cad_dispatcher.dispatch_to_cad(
+        alert_payload=alert_meta,
+        gps_lat=payload.gps_lat,
+        gps_lon=payload.gps_lon,
+    )
+    return {"status": "dispatched", "incident": incident}
+
+
+@router.get("/cad/history")
+async def get_cad_dispatch_history(user: User = Depends(get_current_user)):
+    """Returns municipal CAD dispatch log."""
+    return {
+        "count": len(default_cad_dispatcher.incident_history),
+        "history": default_cad_dispatcher.incident_history[::-1],
+    }
+
+
+@router.post("/hardware/acceptance-test")
+async def run_hardware_acceptance_test(user: User = Depends(get_current_user)):
+    """Executes the automated Hardware Acceptance Test (HAT) and generates certification report."""
+    if not HardwareAcceptanceTester:
+        raise HTTPException(status_code=500, detail="HAT suite not available.")
+
+    tester = HardwareAcceptanceTester()
+    cert = tester.generate_full_hat_certificate()
+    return {"status": "completed", "certificate": cert}
+
+
+
 
 
