@@ -19,8 +19,17 @@ try:
 except ImportError:
     ort = None
 
+try:
+    from .homography import default_beach_calibrator
+except ImportError:
+    try:
+        from inference.homography import default_beach_calibrator
+    except ImportError:
+        default_beach_calibrator = None
+
 
 class InferenceEngine:
+
     """Unified wrapper supporting both PyTorch (.pt) and ONNX Runtime (.onnx) backends."""
 
     def __init__(self, checkpoint_path: str, device: torch.device):
@@ -517,16 +526,49 @@ def track_corridors_temporally(
     results = []
     for tr in active_tracks:
         avg_speed = float(sum(tr["velocities"]) / max(len(tr["velocities"]), 1))
+        last_reg = tr["last_region"] or {}
+
+        cx = last_reg.get("x", 0.5) + last_reg.get("w", 0.0) / 2
+        cy = last_reg.get("y", 0.5) + last_reg.get("h", 0.0) / 2
+
+        offshore_dist = None
+        gps_coords = None
+        real_drift_velocity_str = f"{round(avg_speed, 2)} px/s"
+
+        if default_beach_calibrator is not None:
+            metric_data = default_beach_calibrator.pixel_to_metric_distance(cx, cy)
+            offshore_dist = metric_data["offshore_distance_m"]
+            lat, lon = default_beach_calibrator.metric_to_gps(
+                metric_data["offshore_distance_m"],
+                metric_data["lateral_offset_m"],
+            )
+            gps_coords = {"lat": lat, "lon": lon}
+            phys_speed = default_beach_calibrator.calculate_physical_drift_speed(avg_speed, cy)
+            real_drift_velocity_str = f"{phys_speed} m/s"
+
+        enriched_region = {
+            **last_reg,
+            "corridor_id": tr["id"],
+            "drift_velocity": real_drift_velocity_str,
+            "offshore_distance_m": offshore_dist,
+            "gps_coordinates": gps_coords,
+            "persistence_frames": tr["hits"],
+            "tracking_status": "TRACKED" if tr["hits"] >= 2 else "EMERGING",
+        }
+
         results.append({
             "start": round(tr["start"], 2),
             "end": round(tr["end"], 2),
             "confidence": round(tr["peak_confidence"], 4),
             "corridor_id": tr["id"],
-            "drift_velocity": round(avg_speed, 4),
-            "region": tr["last_region"],
+            "drift_velocity": real_drift_velocity_str,
+            "offshore_distance_m": offshore_dist,
+            "gps_coordinates": gps_coords,
+            "region": enriched_region,
         })
 
     return results
+
 
 
 def _merge_into_windows(raw_detections: list[dict], gap_tolerance_sec: float = 1.0) -> list[dict]:

@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ripguard"
+    redis_url: str | None = None
 
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"

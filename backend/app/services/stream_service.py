@@ -22,6 +22,17 @@ from app.services.alert_service import default_alert_dispatcher  # noqa: E402
 settings = get_settings()
 
 
+from enum import Enum
+
+
+class StreamStatus(str, Enum):
+    INITIALIZING = "initializing"
+    STREAMING = "streaming"
+    RECONNECTING = "reconnecting"
+    DEGRADED = "degraded"
+    OFFLINE = "offline"
+
+
 class LiveStreamManager:
     def __init__(self, stream_source: str | int = 0, checkpoint_path: str | None = None):
         self.stream_source = stream_source
@@ -31,6 +42,8 @@ class LiveStreamManager:
             else settings.model_checkpoint_path
         )
         self.is_running = False
+        self.stream_status = StreamStatus.INITIALIZING
+        self.reconnect_count = 0
         self.device = (
             torch.device("cuda")
             if torch.cuda.is_available()
@@ -40,11 +53,12 @@ class LiveStreamManager:
         self.in_channels = 3
         self.latest_frame_jpeg: bytes | None = None
         self.latest_meta: dict = {
-            "status": "idle",
+            "status": StreamStatus.INITIALIZING.value,
             "confidence": 0.0,
             "risk_level": "LOW",
             "fps": 0.0,
             "timestamp": time.time(),
+            "reconnect_count": 0,
         }
         self.subscribers: set[asyncio.Queue] = set()
 
@@ -57,19 +71,23 @@ class LiveStreamManager:
             return
         self._init_model()
         self.is_running = True
+        self.stream_status = StreamStatus.INITIALIZING
         asyncio.create_task(self._capture_and_infer_loop())
 
     def stop(self):
         self.is_running = False
+        self.stream_status = StreamStatus.OFFLINE
+
 
     async def _capture_and_infer_loop(self):
-        # Allow passing test video paths or RTSP URLs
         source = self.stream_source
-        # If integer string (like "0"), convert to int for webcam
         if isinstance(source, str) and source.isdigit():
             source = int(source)
 
-        cap = cv2.VideoCapture(source)
+        cap = None
+        backoff_seconds = 1.0
+        max_backoff = 30.0
+
         prev_frame = None
         ema_confidence = 0.0
         alpha = 0.65
@@ -79,6 +97,20 @@ class LiveStreamManager:
 
         try:
             while self.is_running:
+                # Open or re-open capture if not open
+                if cap is None or not cap.isOpened():
+                    self.stream_status = StreamStatus.INITIALIZING if self.reconnect_count == 0 else StreamStatus.RECONNECTING
+                    self.latest_meta["status"] = self.stream_status.value
+                    cap = cv2.VideoCapture(source)
+                    if not cap.isOpened():
+                        self.reconnect_count += 1
+                        self.latest_meta["reconnect_count"] = self.reconnect_count
+                        await asyncio.sleep(min(backoff_seconds, max_backoff))
+                        backoff_seconds = min(backoff_seconds * 1.5, max_backoff)
+                        continue
+                    else:
+                        backoff_seconds = 1.0
+
                 ret, frame = cap.read()
                 if not ret:
                     # Loop back if it's a test video file
@@ -87,8 +119,19 @@ class LiveStreamManager:
                         await asyncio.sleep(0.01)
                         continue
                     else:
-                        await asyncio.sleep(0.1)
+                        self.reconnect_count += 1
+                        self.stream_status = StreamStatus.RECONNECTING
+                        self.latest_meta["status"] = StreamStatus.RECONNECTING.value
+                        self.latest_meta["reconnect_count"] = self.reconnect_count
+                        if cap is not None:
+                            cap.release()
+                            cap = None
+                        await asyncio.sleep(min(backoff_seconds, max_backoff))
+                        backoff_seconds = min(backoff_seconds * 1.5, max_backoff)
                         continue
+
+                backoff_seconds = 1.0
+                self.stream_status = StreamStatus.STREAMING
 
                 frame_count += 1
                 now = time.time()
@@ -127,11 +170,12 @@ class LiveStreamManager:
                 self.latest_frame_jpeg = buffer.tobytes()
 
                 self.latest_meta = {
-                    "status": "streaming",
+                    "status": self.stream_status.value,
                     "confidence": round(ema_confidence, 4),
                     "risk_level": risk_level,
                     "fps": current_fps,
                     "timestamp": round(now, 2),
+                    "reconnect_count": self.reconnect_count,
                 }
 
                 # Evaluate for sustained high-risk alert dispatch
@@ -155,8 +199,11 @@ class LiveStreamManager:
                 await asyncio.sleep(0.02)
 
         finally:
-            cap.release()
+            if cap is not None:
+                cap.release()
+            self.stream_status = StreamStatus.OFFLINE
             self.is_running = False
+
 
 
 class MultiStreamRegistry:

@@ -527,8 +527,19 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                                       Drift: <span className="text-white font-semibold">{det.bounding_region.drift_velocity}</span>
                                     </span>
                                   )}
+                                  {det.bounding_region.offshore_distance_m != null && (
+                                    <span className="text-slate-400">
+                                      Position: <span className="text-white font-semibold">{det.bounding_region.offshore_distance_m}m offshore</span>
+                                    </span>
+                                  )}
+                                  {det.bounding_region.gps_coordinates && (
+                                    <span className="text-slate-400" title={`GPS: ${det.bounding_region.gps_coordinates.lat}, ${det.bounding_region.gps_coordinates.lon}`}>
+                                      GPS: <span className="text-sky-300 font-mono text-[10px]">{det.bounding_region.gps_coordinates.lat.toFixed(4)}, {det.bounding_region.gps_coordinates.lon.toFixed(4)}</span>
+                                    </span>
+                                  )}
                                 </div>
                               )}
+
                             </div>
                             <button
                               onClick={() => jumpToTime(det.start_timestamp_sec)}

@@ -11,6 +11,7 @@ from app.core.rate_limiter import rate_limit_upload
 from app.api.deps import get_current_user, get_current_user_flexible
 from app.models.user import User
 from app.models.session import AnalysisSession, SessionStatus, Detection, DetectionFeedback
+from app.models.benchmark import BenchmarkRun
 from app.schemas.session import (
     SessionOut,
     SessionDetailOut,
@@ -21,8 +22,10 @@ from app.schemas.session import (
 from app.services.analysis_service import process_video
 from app.services.task_queue import default_job_queue
 from ml.active_learning.harvester import ActiveLearningHarvester
+from ml.active_learning.retrain_daemon import default_retrain_daemon
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
 settings = get_settings()
 
 
@@ -337,6 +340,56 @@ async def get_active_learning_manifest(
         })
 
     return ActiveLearningHarvester.compile_manifest(records)
+
+
+@router.post("/feedback/retrain/trigger")
+async def trigger_active_learning_retrain(
+    force: bool = False,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Triggers the active learning continuous retraining loop on operator feedback.
+    If fine-tuning succeeds, registers the updated model version in BenchmarkRun.
+    """
+    res = await db.execute(select(DetectionFeedback))
+    feedbacks = res.scalars().all()
+    records = [
+        {
+            "id": fb.id,
+            "session_id": fb.session_id,
+            "feedback_type": fb.feedback_type.value if hasattr(fb.feedback_type, "value") else str(fb.feedback_type),
+            "operator_notes": fb.operator_notes,
+        }
+        for fb in feedbacks
+    ]
+
+    retrain_res = await default_retrain_daemon.check_and_retrain(records, force=force)
+    if retrain_res.get("triggered") and "metrics" in retrain_res:
+        m = retrain_res["metrics"]
+        benchmark_entry = BenchmarkRun(
+            id=uuid.uuid4(),
+            model_version=m["model_version"],
+            dataset_split="ripvis_active_finetune",
+            iou=m["val_iou"],
+            dice_f1=m["dice_f1"],
+            precision=m["precision"],
+            recall=m["recall"],
+            notes=f"Active learning fine-tune from {len(feedbacks)} operator corrections",
+        )
+        db.add(benchmark_entry)
+        await db.commit()
+
+    return retrain_res
+
+
+@router.get("/feedback/retrain/status")
+async def get_retrain_status(
+    user: User = Depends(get_current_user),
+):
+    """Returns the continuous retraining daemon status and metric history."""
+    return default_retrain_daemon.get_status()
+
 
 
 

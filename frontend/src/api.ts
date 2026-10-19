@@ -15,7 +15,10 @@ export interface BoundingRegion {
   drift_velocity?: string;
   tracking_status?: string;
   persistence_frames?: number;
+  offshore_distance_m?: number;
+  gps_coordinates?: { lat: number; lon: number } | null;
 }
+
 
 export interface Detection {
   id: string;
