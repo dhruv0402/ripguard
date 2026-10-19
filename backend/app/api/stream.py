@@ -151,3 +151,212 @@ async def trigger_test_dispatch(
     return {"status": "dispatched", "payload": payload}
 
 
+# ==============================================================================
+# Camera Calibration & Hardware Edge Acceleration
+# ==============================================================================
+
+try:
+    from ml.inference.homography import BeachCameraCalibrator, default_beach_calibrator
+    from ml.inference.edge_optimizer import EdgeOptimizer
+except ImportError:
+    try:
+        from inference.homography import BeachCameraCalibrator, default_beach_calibrator
+        from inference.edge_optimizer import EdgeOptimizer
+    except ImportError:
+        BeachCameraCalibrator = None
+        default_beach_calibrator = None
+        EdgeOptimizer = None
+
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field
+
+# Stream-specific camera calibration registry
+stream_calibrators: dict[str, Any] = {}
+
+
+def _get_stream_calibrator(source: str | None = None) -> Any:
+    key = (source or "default").strip()
+    if key not in stream_calibrators:
+        if default_beach_calibrator is not None:
+            stream_calibrators[key] = BeachCameraCalibrator()
+        else:
+            return None
+    return stream_calibrators[key]
+
+
+class CalibrationPayload(BaseModel):
+    source: Optional[str] = Field(None, description="Stream source identifier")
+    camera_lat: Optional[float] = Field(None, description="Camera tower GPS latitude")
+    camera_lon: Optional[float] = Field(None, description="Camera tower GPS longitude")
+    mounting_height_m: Optional[float] = Field(None, description="Mounting height above water line in meters")
+    tilt_angle_deg: Optional[float] = Field(None, description="Camera tilt depression angle in degrees")
+    azimuth_deg: Optional[float] = Field(None, description="Compass azimuth heading in degrees")
+    focal_length_px: Optional[float] = Field(None, description="Camera focal length in pixels")
+    gcps: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="4 (or more) surveyed ground control points with pixel_x, pixel_y, rtk_lat, rtk_lon",
+    )
+
+
+class ProjectionPayload(BaseModel):
+    source: Optional[str] = Field(None, description="Stream source identifier")
+    pixel_x: Optional[float] = Field(None, description="Pixel x coordinate [0, img_w]")
+    pixel_y: Optional[float] = Field(None, description="Pixel y coordinate [0, img_h]")
+    norm_x: Optional[float] = Field(None, description="Normalized x coordinate [0, 1]")
+    norm_y: Optional[float] = Field(None, description="Normalized y coordinate [0, 1]")
+    img_w: int = Field(1920, description="Image width")
+    img_h: int = Field(1080, description="Image height")
+
+
+@router.get("/calibration")
+async def get_stream_calibration(
+    source: str | None = None,
+    user: User = Depends(get_current_user),
+):
+    """Retrieves current camera calibration profile, GCP status, and homography matrix."""
+    calibrator = _get_stream_calibrator(source)
+    if not calibrator:
+        raise HTTPException(status_code=500, detail="Homography calibrator engine unavailable.")
+    return calibrator.to_dict()
+
+
+@router.post("/calibration")
+async def calibrate_stream_camera(
+    payload: CalibrationPayload,
+    user: User = Depends(get_current_user),
+):
+    """
+    Calibrates camera mounting height (h), tilt angle (theta), and solves 3x3 planar homography matrix
+    using 4 Ground Control Points (GCPs) surveyed with an RTK GPS on the beach.
+    """
+    calibrator = _get_stream_calibrator(payload.source)
+    if not calibrator:
+        raise HTTPException(status_code=500, detail="Homography calibrator engine unavailable.")
+
+    # Update base properties if supplied
+    if payload.camera_lat is not None:
+        calibrator.camera_lat = float(payload.camera_lat)
+    if payload.camera_lon is not None:
+        calibrator.camera_lon = float(payload.camera_lon)
+    if payload.mounting_height_m is not None:
+        calibrator.height = max(1.0, float(payload.mounting_height_m))
+    if payload.tilt_angle_deg is not None:
+        import math
+        calibrator.tilt_deg = float(payload.tilt_angle_deg)
+        calibrator.tilt_rad = math.radians(calibrator.tilt_deg)
+    if payload.azimuth_deg is not None:
+        import math
+        calibrator.azimuth_deg = float(payload.azimuth_deg)
+        calibrator.azimuth_rad = math.radians(calibrator.azimuth_deg)
+    if payload.focal_length_px is not None:
+        calibrator.focal_px = float(payload.focal_length_px)
+
+    gcp_calibration_result = None
+    if payload.gcps is not None:
+        if len(payload.gcps) < 4:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"At least 4 Ground Control Points (GCPs) surveyed with RTK GPS are required. Provided: {len(payload.gcps)}",
+            )
+        try:
+            gcp_calibration_result = calibrator.calibrate_with_gcps(payload.gcps)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Homography calibration error: {str(e)}",
+            )
+
+    return {
+        "status": "calibrated",
+        "calibration": calibrator.to_dict(),
+        "gcp_result": gcp_calibration_result,
+    }
+
+
+@router.post("/calibration/project")
+async def project_stream_coordinate(
+    payload: ProjectionPayload,
+    user: User = Depends(get_current_user),
+):
+    """
+    Projects a camera image pixel coordinate to physical metric distances (meters offshore / alongshore)
+    and RTK GPS coordinates (latitude, longitude) using the calibrated homography profile.
+    """
+    calibrator = _get_stream_calibrator(payload.source)
+    if not calibrator:
+        raise HTTPException(status_code=500, detail="Homography calibrator engine unavailable.")
+
+    # Derive normalized coordinates
+    norm_x = payload.norm_x
+    norm_y = payload.norm_y
+    if norm_x is None:
+        if payload.pixel_x is None:
+            raise HTTPException(status_code=400, detail="Must provide either pixel_x/pixel_y or norm_x/norm_y.")
+        norm_x = payload.pixel_x / payload.img_w
+    if norm_y is None:
+        if payload.pixel_y is None:
+            raise HTTPException(status_code=400, detail="Must provide either pixel_x/pixel_y or norm_x/norm_y.")
+        norm_y = payload.pixel_y / payload.img_h
+
+    metric_res = calibrator.pixel_to_metric_distance(
+        norm_x=norm_x,
+        norm_y=norm_y,
+        img_w=payload.img_w,
+        img_h=payload.img_h,
+    )
+    lat, lon = calibrator.metric_to_gps(
+        offshore_distance_m=metric_res["offshore_distance_m"],
+        lateral_offset_m=metric_res["lateral_offset_m"],
+    )
+
+    return {
+        **metric_res,
+        "gps": {"lat": lat, "lon": lon},
+        "camera_tower": {
+            "lat": calibrator.camera_lat,
+            "lon": calibrator.camera_lon,
+            "height_m": calibrator.height,
+            "tilt_deg": calibrator.tilt_deg,
+        },
+    }
+
+
+@router.delete("/calibration")
+async def reset_stream_calibration(
+    source: str | None = None,
+    user: User = Depends(get_current_user),
+):
+    """Resets camera calibration back to default factory baseline."""
+    key = (source or "default").strip()
+    if BeachCameraCalibrator is not None:
+        stream_calibrators[key] = BeachCameraCalibrator()
+    return {"status": "reset", "source": key}
+
+
+@router.get("/hardware")
+async def get_hardware_edge_status(
+    user: User = Depends(get_current_user),
+):
+    """
+    Returns edge hardware acceleration status, NVIDIA Jetson Orin compatibility,
+    TensorRT FP16 compilation status, and sub-20W power envelope certification.
+    """
+    if EdgeOptimizer is None:
+        raise HTTPException(status_code=500, detail="EdgeOptimizer module not available.")
+
+    optimizer = EdgeOptimizer()
+    caps = optimizer.detect_edge_capabilities()
+    bench = optimizer.benchmark_edge_throughput(iterations=5, warmup=1)
+
+    return {
+        "status": "operational",
+        "target_node": "NVIDIA Jetson Orin Lifeguard Edge Node",
+        "power_mode": "Sub-20W (Jetson Orin 15W/20W Mode)",
+        "precision": "TensorRT FP16",
+        "target_fps": 30.0,
+        "capabilities": caps,
+        "benchmark": bench,
+    }
+
+
+

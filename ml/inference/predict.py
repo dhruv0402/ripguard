@@ -40,10 +40,21 @@ class InferenceEngine:
         if self.is_onnx:
             if ort is None:
                 raise ImportError("onnxruntime is not installed. Run 'pip install onnxruntime' to use ONNX models.")
-            # Set up ONNX Runtime Session
-            providers = ["CPUExecutionProvider"]
-            if "CoreMLExecutionProvider" in ort.get_available_providers():
-                providers.insert(0, "CoreMLExecutionProvider")
+            # Set up ONNX Runtime Session with TensorRT FP16 / CUDA priority for Jetson Orin edge deployment
+            providers = []
+            available = ort.get_available_providers()
+            if "TensorrtExecutionProvider" in available:
+                providers.append(("TensorrtExecutionProvider", {
+                    "trt_fp16_enable": True,
+                    "trt_engine_cache_enable": True,
+                    "trt_engine_cache_path": os.path.dirname(os.path.abspath(checkpoint_path)) or ".",
+                }))
+            if "CUDAExecutionProvider" in available:
+                providers.append("CUDAExecutionProvider")
+            if "CoreMLExecutionProvider" in available:
+                providers.append("CoreMLExecutionProvider")
+            providers.append("CPUExecutionProvider")
+
             self.ort_session = ort.InferenceSession(checkpoint_path, providers=providers)
             input_info = self.ort_session.get_inputs()[0]
             self.input_name = input_info.name
@@ -582,8 +593,17 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default="outputs")
-    parser.add_argument("--sample_rate", type=int, default=5)
+    parser.add_argument("--edge-trt-fp16", action="store_true", help="Compile and optimize ONNX checkpoint to TensorRT FP16 for Jetson Orin")
     args = parser.parse_args()
+
+    if args.edge_trt_fp16 and args.checkpoint.endswith(".onnx"):
+        try:
+            from ml.inference.edge_optimizer import EdgeOptimizer
+        except ImportError:
+            from inference.edge_optimizer import EdgeOptimizer
+        optimizer = EdgeOptimizer(args.checkpoint)
+        opt_res = optimizer.compile_onnx_to_tensorrt()
+        print(f"TensorRT FP16 Edge Optimization compiled: {opt_res['engine_path']}")
 
     result = run_inference_on_video(args.video, args.checkpoint, args.output_dir, args.sample_rate)
     print(f"Annotated video: {result['annotated_video_path']}")

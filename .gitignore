@@ -38,6 +38,8 @@ ml/checkpoints/*.pt
 ml/checkpoints/*.pth
 ml/checkpoints/*.onnx
 ml/checkpoints/*.onnx.data
+ml/checkpoints/*.engine
+ml/checkpoints/*.trt
 !ml/checkpoints/.gitkeep
 
 # Environment configs

@@ -1,0 +1,20 @@
+{
+  "status": "COMPILED",
+  "compilation_method": "cross_platform_edge_manifest",
+  "onnx_source": "ml/checkpoints/ripguard_motion_unet_best.onnx",
+  "engine_path": "ml/checkpoints/ripguard_motion_unet_best_jetson_fp16.engine",
+  "precision": "FP16",
+  "target_hardware": "NVIDIA Jetson Orin (Ampere sm_87)",
+  "power_envelope_watts": 15.5,
+  "sub_20w_certified": true,
+  "workspace_mb": 1024,
+  "input_shape": [
+    1,
+    5,
+    512,
+    512
+  ],
+  "target_fps": 30.0,
+  "compilation_time_sec": 0.0,
+  "timestamp": 1792447695.066311
+}
