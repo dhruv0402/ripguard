@@ -27,6 +27,15 @@ except ImportError:
     except ImportError:
         default_beach_calibrator = None
 
+try:
+    from .optical_filters import SunGlintFilter, TwilightAdaptivePreprocessor
+except ImportError:
+    try:
+        from inference.optical_filters import SunGlintFilter, TwilightAdaptivePreprocessor
+    except ImportError:
+        SunGlintFilter = None
+        TwilightAdaptivePreprocessor = None
+
 
 class InferenceEngine:
 
@@ -126,7 +135,22 @@ def _preprocess_frame(frame: np.ndarray, prev_frame: np.ndarray | None = None, i
             prev_resized = cv2.resize(prev_frame, (size, size))
             prev_gray = cv2.cvtColor(prev_resized, cv2.COLOR_BGR2GRAY)
             curr_gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+
+            # Twilight & high ISO sensor noise suppression
+            if TwilightAdaptivePreprocessor is not None:
+                twilight_pre = TwilightAdaptivePreprocessor()
+                lighting = twilight_pre.analyze_scene_lighting(resized)
+                prev_gray = twilight_pre.preprocess_for_optical_flow(prev_gray, lighting)
+                curr_gray = twilight_pre.preprocess_for_optical_flow(curr_gray, lighting)
+
             flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+
+            # Sun glint specular flare suppression
+            if SunGlintFilter is not None:
+                glint_filt = SunGlintFilter()
+                glint_mask = glint_filt.compute_glint_mask(resized)
+                flow = glint_filt.suppress_flow_in_glint(flow, glint_mask)
+
             flow = np.clip(flow, -20.0, 20.0) / 20.0
         else:
             flow = np.zeros((size, size, 2), dtype=np.float32)

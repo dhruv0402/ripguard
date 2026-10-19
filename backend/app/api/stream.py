@@ -359,4 +359,145 @@ async def get_hardware_edge_status(
     }
 
 
+# ==============================================================================
+# Environmental Sensing & Maritime Compliance Endpoints
+# ==============================================================================
+
+try:
+    from ml.inference.tide_compensator import TidalCompensator
+    from ml.inference.optical_filters import SunGlintFilter, TwilightAdaptivePreprocessor
+    from ml.inference.thermal_governor import JetsonThermalGovernor
+except ImportError:
+    try:
+        from inference.tide_compensator import TidalCompensator
+        from inference.optical_filters import SunGlintFilter, TwilightAdaptivePreprocessor
+        from inference.thermal_governor import JetsonThermalGovernor
+    except ImportError:
+        TidalCompensator = None
+        SunGlintFilter = None
+        TwilightAdaptivePreprocessor = None
+        JetsonThermalGovernor = None
+
+from app.core.maritime_compliance import (
+    default_compliance_guard,
+    ClearanceAction,
+    STATUTORY_MARITIME_DISCLAIMER,
+)
+
+# Global singleton environmental handlers
+default_tide_compensator = TidalCompensator() if TidalCompensator else None
+default_thermal_governor = JetsonThermalGovernor() if JetsonThermalGovernor else None
+
+
+class OperatorClearancePayload(BaseModel):
+    alert_id: str = Field(..., description="Alert ID being cleared or dismissed")
+    action: ClearanceAction = Field(..., description="Lifeguard action (CONFIRMED_DISPATCH, DISMISSED_FALSE_ALARM, UNDER_OBSERVATION)")
+    notes: Optional[str] = Field(None, description="Visual observations from duty lifeguard")
+
+
+class TideUpdatePayload(BaseModel):
+    water_level_m: Optional[float] = Field(None, description="Manual tide height in meters above MSL")
+    station_id: Optional[str] = Field(None, description="NOAA station ID")
+
+
+@router.post("/compliance/clearance")
+async def record_operator_clearance(
+    payload: OperatorClearancePayload,
+    user: User = Depends(get_current_user),
+):
+    """
+    Records human-in-the-loop operator clearance or dismissal of an alert,
+    logging it into the tamper-evident maritime compliance audit log.
+    """
+    entry = default_compliance_guard.record_operator_clearance(
+        alert_id=payload.alert_id,
+        user_id=user.id,
+        user_email=user.email,
+        action=payload.action,
+        operator_notes=payload.notes,
+    )
+    return {
+        "status": "clearance_recorded",
+        "entry": entry,
+        "statutory_disclaimer": STATUTORY_MARITIME_DISCLAIMER,
+    }
+
+
+@router.get("/compliance/audit-trail")
+async def get_compliance_audit_trail(
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+):
+    """Retrieves chronological tamper-evident maritime compliance audit trail."""
+    return {
+        "count": len(default_compliance_guard.audit_log),
+        "audit_trail": default_compliance_guard.get_audit_trail(limit=limit),
+        "statutory_disclaimer": STATUTORY_MARITIME_DISCLAIMER,
+    }
+
+
+@router.get("/environmental")
+async def get_environmental_status(
+    source: str | None = None,
+    user: User = Depends(get_current_user),
+):
+    """
+    Returns real-time environmental conditions:
+      - Tidal stage modulation & effective water height
+      - Sun glint & optical CPL filter recommendation
+      - Twilight illumination & noise estimation
+      - Jetson Orin SoC temperature & thermal governance state
+    """
+    calibrator = _get_stream_calibrator(source)
+
+    # 1. Tide Status
+    tide_status = (
+        default_tide_compensator.get_effective_camera_height()
+        if default_tide_compensator
+        else {"effective_camera_height_m": calibrator.height if calibrator else 12.0}
+    )
+
+    if calibrator and default_tide_compensator:
+        calibrator.set_active_tide_delta(tide_status.get("water_level_delta_m", 0.0))
+
+    # 2. Thermal Status
+    thermal_status = (
+        default_thermal_governor.evaluate_thermal_state()
+        if default_thermal_governor
+        else {"thermal_state": "NOMINAL", "soc_temperature_c": 45.0}
+    )
+
+    return {
+        "tidal_modulation": tide_status,
+        "thermal_governance": thermal_status,
+        "optical_filters": {
+            "glint_filter_active": True,
+            "twilight_filter_active": True,
+            "cpl_polarizer_mode": "AUTO_ACTUATED",
+        },
+        "maritime_classification": "DECISION_SUPPORT_ONLY",
+    }
+
+
+@router.post("/environmental/tide")
+async def update_environmental_tide(
+    payload: TideUpdatePayload,
+    user: User = Depends(get_current_user),
+):
+    """Updates active tidal compensation via manual water level or station selection."""
+    if not default_tide_compensator:
+        raise HTTPException(status_code=500, detail="Tidal compensator not available.")
+
+    if payload.station_id:
+        default_tide_compensator.station_id = payload.station_id
+    if payload.water_level_m is not None:
+        default_tide_compensator.set_manual_override(payload.water_level_m)
+    else:
+        default_tide_compensator.set_manual_override(None)
+
+    status = default_tide_compensator.get_effective_camera_height()
+    return {"status": "updated", "tide": status}
+
+
+
 

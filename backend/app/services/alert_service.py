@@ -81,7 +81,7 @@ class AlertDispatcher:
         is_escalated: bool = False,
     ) -> dict[str, Any]:
         priority = "ESCALATED_LIFE_SAFETY" if is_escalated else "CRITICAL"
-        return {
+        payload = {
             "id": f"alert_{int(time.time())}",
             "type": "SUSTAINED_RIP_CURRENT_DETECTED",
             "priority": priority,
@@ -97,6 +97,11 @@ class AlertDispatcher:
                 f"{'ACTIVATE BEACH SIREN & IMMEDIATE PATROL RESCUE.' if is_escalated else 'Lifeguard inspection recommended immediately.'}"
             ),
         }
+        try:
+            from app.core.maritime_compliance import default_compliance_guard
+            return default_compliance_guard.inject_compliance_metadata(payload)
+        except Exception:
+            return payload
 
     async def _deliver_all_channels(self, payload: dict[str, Any]) -> None:
         tasks = []

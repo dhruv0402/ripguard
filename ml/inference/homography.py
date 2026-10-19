@@ -58,6 +58,18 @@ class BeachCameraCalibrator:
         self.max_residual_m: Optional[float] = None
         self.calibrated_gcps: List[Dict[str, Any]] = []
 
+        # Real-time Tidal Stage Offset (Delta Z_tide in meters)
+        self.active_tide_delta_m: float = 0.0
+
+    def set_active_tide_delta(self, delta_m: float):
+        """Sets the active water level delta (meters) from tidal compensation."""
+        self.active_tide_delta_m = float(delta_m)
+
+    @property
+    def effective_height(self) -> float:
+        """Dynamic height above instantaneous water line: h_eff = base_height - delta_z_tide."""
+        return max(1.0, round(self.height - self.active_tide_delta_m, 2))
+
     def calibrate_with_gcps(
         self,
         gcps: List[Dict[str, Any] | GCPPoint],
@@ -225,7 +237,8 @@ class BeachCameraCalibrator:
 
             # Keep values physically plausible
             offshore_distance = max(1.0, offshore_distance)
-            direct_range = math.sqrt(offshore_distance**2 + lateral_offset**2 + self.height**2)
+            # Direct range incorporates instantaneous effective water-line height
+            direct_range = math.sqrt(offshore_distance**2 + lateral_offset**2 + self.effective_height**2)
 
             return {
                 "offshore_distance_m": round(offshore_distance, 1),
@@ -233,6 +246,8 @@ class BeachCameraCalibrator:
                 "direct_range_m": round(direct_range, 1),
                 "method": "planar_homography_4gcp",
                 "calibration_rmse_m": self.reprojection_rmse_m,
+                "effective_height_m": self.effective_height,
+                "tide_delta_m": round(self.active_tide_delta_m, 2),
             }
 
         # Otherwise, fall back to analytical optical depression frustum model
@@ -243,16 +258,18 @@ class BeachCameraCalibrator:
         total_depression = self.tilt_rad + d_theta
         total_depression = max(math.radians(2.0), min(math.radians(88.0), total_depression))
 
-        ground_range = self.height / math.tan(total_depression)
+        ground_range = self.effective_height / math.tan(total_depression)
         d_phi = math.atan2(px_centered, self.focal_px)
         lateral_offset = ground_range * math.tan(d_phi)
-        direct_range = math.sqrt(ground_range**2 + lateral_offset**2 + self.height**2)
+        direct_range = math.sqrt(ground_range**2 + lateral_offset**2 + self.effective_height**2)
 
         return {
             "offshore_distance_m": round(ground_range, 1),
             "lateral_offset_m": round(lateral_offset, 1),
             "direct_range_m": round(direct_range, 1),
             "method": "analytical_frustum",
+            "effective_height_m": self.effective_height,
+            "tide_delta_m": round(self.active_tide_delta_m, 2),
         }
 
     def metric_to_gps(
