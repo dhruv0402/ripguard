@@ -32,7 +32,9 @@ services:
     depends_on:
       - backend
     environment:
+      VITE_API_URL: http://localhost:8000
       NEXT_PUBLIC_API_URL: http://localhost:8000
+
 
 volumes:
   ripguard_pgdata:

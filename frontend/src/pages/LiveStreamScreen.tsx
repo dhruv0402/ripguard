@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Radio, AlertTriangle, ShieldCheck, Activity, RefreshCw } from 'lucide-react';
 import { DisclaimerBanner } from '../components/Navbar';
+import { apiFetch, getStreamFeedUrl } from '../api';
 
 interface Telemetry {
   status: string;
@@ -22,7 +23,7 @@ interface AlertItem {
 
 export const LiveStreamScreen: React.FC = () => {
   const [streamSource, setStreamSource] = useState<string>('test_assets/beach_ripvis_072.mp4');
-  const [activeUrl, setActiveUrl] = useState<string>('/api/stream/feed?source=test_assets/beach_ripvis_072.mp4');
+  const [activeUrl, setActiveUrl] = useState<string>(() => getStreamFeedUrl('test_assets/beach_ripvis_072.mp4'));
   const [telemetry, setTelemetry] = useState<Telemetry>({
     status: 'connecting',
     confidence: 0,
@@ -38,19 +39,13 @@ export const LiveStreamScreen: React.FC = () => {
     // Poll telemetry status and alerts every 1200ms for smooth UI updates without network thrashing
     const interval = setInterval(async () => {
       try {
-        const res = await fetch('/api/stream/status');
-        if (res.ok) {
-          const data = await res.json();
-          setTelemetry(data);
-        }
+        const data = await apiFetch('/api/stream/status');
+        setTelemetry(data);
 
-        const alertRes = await fetch('/api/stream/alerts');
-        if (alertRes.ok) {
-          const alertData = await alertRes.json();
-          setAlerts(alertData.alerts || []);
-        }
+        const alertData = await apiFetch('/api/stream/alerts');
+        setAlerts(alertData.alerts || []);
       } catch {
-        // stream might be starting
+        // stream might be starting or user not yet authorized
       }
     }, 1200);
 
@@ -61,13 +56,11 @@ export const LiveStreamScreen: React.FC = () => {
     e.preventDefault();
     if (!webhookUrl) return;
     try {
-      const res = await fetch(`/api/stream/alerts/webhook?url=${encodeURIComponent(webhookUrl)}`, {
+      await apiFetch(`/api/stream/alerts/webhook?url=${encodeURIComponent(webhookUrl)}`, {
         method: 'POST',
       });
-      if (res.ok) {
-        setWebhookSuccess(true);
-        setTimeout(() => setWebhookSuccess(false), 3000);
-      }
+      setWebhookSuccess(true);
+      setTimeout(() => setWebhookSuccess(false), 3000);
     } catch {
       // error handling
     }
@@ -75,8 +68,9 @@ export const LiveStreamScreen: React.FC = () => {
 
   const handleApplySource = (e: React.FormEvent) => {
     e.preventDefault();
-    setActiveUrl(`/api/stream/feed?source=${encodeURIComponent(streamSource)}&t=${Date.now()}`);
+    setActiveUrl(getStreamFeedUrl(streamSource));
   };
+
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">

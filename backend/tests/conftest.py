@@ -1,10 +1,16 @@
+import os
+import sys
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
+# Ensure root workspace is in sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
 from app.main import app
 from app.core.database import Base, get_db, set_session_maker
+
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 test_engine = create_async_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})

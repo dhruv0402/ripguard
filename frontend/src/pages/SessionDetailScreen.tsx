@@ -1,7 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { apiFetch, getVideoUrl, AnalysisSession } from '../api';
+import {
+  apiFetch,
+  getVideoUrl,
+  getLiveFeedUrl,
+  AnalysisSession,
+  submitSessionFeedback,
+  getActiveLearningManifest,
+  FeedbackType,
+} from '../api';
 import { DisclaimerBanner } from '../components/Navbar';
-import { ArrowLeft, AlertTriangle, ShieldCheck, AlertCircle, Play, RefreshCw, Radio, MapPin, CheckCircle2 } from 'lucide-react';
+
+import {
+  ArrowLeft,
+  AlertTriangle,
+  ShieldCheck,
+  AlertCircle,
+  Play,
+  RefreshCw,
+  Radio,
+  MapPin,
+  CheckCircle2,
+  ThumbsUp,
+  ThumbsDown,
+  Download,
+  Activity,
+  Check,
+} from 'lucide-react';
 
 interface SessionDetailScreenProps {
   sessionId: string;
@@ -16,6 +40,12 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  const [feedbackOpenId, setFeedbackOpenId] = useState<string | null>(null);
+  const [feedbackType, setFeedbackType] = useState<FeedbackType>('false_positive_wake');
+  const [operatorNotes, setOperatorNotes] = useState<string>('');
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSuccess, setFeedbackSuccess] = useState<string | null>(null);
+
   const [liveTelemetry, setLiveTelemetry] = useState<{
     frame_idx: number;
     total_frames: number;
@@ -25,6 +55,7 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
     region: { x: number; y: number; w: number; h: number } | null;
     timeline_so_far: { t: number; confidence: number; region?: { x: number; y: number; w: number; h: number } | null }[];
   } | null>(null);
+
 
   const fetchSession = async () => {
     try {
@@ -76,6 +107,61 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
       videoRef.current.play();
     }
   };
+
+  const handleFeedbackSubmit = async (detectionId: string | null) => {
+    try {
+      setFeedbackSubmitting(true);
+      await submitSessionFeedback(sessionId, {
+        detection_id: detectionId,
+        feedback_type: feedbackType,
+        confidence_rating: 5,
+        operator_notes: operatorNotes.trim() || undefined,
+      });
+      setFeedbackSuccess('Feedback logged for model fine-tuning & active learning.');
+      setFeedbackOpenId(null);
+      setOperatorNotes('');
+      fetchSession();
+      setTimeout(() => setFeedbackSuccess(null), 4000);
+    } catch (err: any) {
+      alert(err.message || 'Failed to submit feedback');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
+  const handleQuickConfirm = async (detectionId: string) => {
+    try {
+      setFeedbackSubmitting(true);
+      await submitSessionFeedback(sessionId, {
+        detection_id: detectionId,
+        feedback_type: 'confirmed_true_positive',
+        confidence_rating: 5,
+      });
+      setFeedbackSuccess('Verified as True Positive rip current.');
+      fetchSession();
+      setTimeout(() => setFeedbackSuccess(null), 4000);
+    } catch (err: any) {
+      alert(err.message || 'Failed to submit feedback');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
+  const handleDownloadManifest = async () => {
+    try {
+      const manifest = await getActiveLearningManifest(sessionId);
+      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ripguard_active_learning_${sessionId.slice(0, 8)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Failed to download manifest');
+    }
+  };
+
 
   if (loading && !session) {
     return (
@@ -232,11 +318,12 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                 <div className="relative bg-black aspect-video flex items-center justify-center">
                   {isProcessing ? (
                     <img
-                      src={`/api/sessions/${session.id}/live-feed`}
+                      src={getLiveFeedUrl(session.id)}
                       alt="Live rip current detection on uploaded video"
                       className="w-full h-full object-contain"
                     />
                   ) : (
+
                     <video
                       key={session.annotated_video_path || session.id}
                       ref={videoRef}
@@ -381,43 +468,171 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                 </div>
               </div>
 
-              {/* Detected Time Windows */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
-                <h3 className="text-sm font-bold text-white">
-                  When Rip Currents Appear ({detections.length})
-                </h3>
+              {/* Detected Time Windows & Operator RLHF Feedback */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-rose-400" />
+                    <span>Rip Channels & Corridors ({detections.length})</span>
+                  </h3>
+                  {session.status === 'done' && (
+                    <button
+                      onClick={handleDownloadManifest}
+                      title="Export hard-negative mining manifest for model fine-tuning"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs border border-slate-700 transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Export Active Learning Manifest</span>
+                    </button>
+                  )}
+                </div>
+
+                {feedbackSuccess && (
+                  <div className="p-2.5 rounded-lg bg-emerald-950/60 border border-emerald-800/80 text-emerald-300 text-xs flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>{feedbackSuccess}</span>
+                  </div>
+                )}
 
                 {detections.length === 0 ? (
                   <p className="text-xs text-slate-400 py-2">
                     No dangerous rip currents were detected in this video.
                   </p>
                 ) : (
-                  <div className="space-y-2.5">
-                    {detections.map((det, index) => (
-                      <div
-                        key={det.id || index}
-                        className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between"
-                      >
-                        <div>
-                          <div className="font-semibold text-sm text-white">
-                            {det.start_timestamp_sec.toFixed(1)}s – {det.end_timestamp_sec.toFixed(1)}s
-                          </div>
-                          <div className="text-xs text-rose-400 mt-0.5">
-                            Rip Current Confidence: {(Math.min(0.985, det.confidence) * 100).toFixed(1)}%
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => jumpToTime(det.start_timestamp_sec)}
-                          className="px-3 py-1.5 rounded-lg bg-sky-500/15 text-sky-300 border border-sky-500/30 text-xs hover:bg-sky-500 hover:text-slate-950 transition-all font-semibold flex items-center space-x-1"
+                  <div className="space-y-3">
+                    {detections.map((det, index) => {
+                      const detFeedback = session.feedback?.filter((f) => f.detection_id === det.id);
+                      const isFeedbackOpen = feedbackOpenId === det.id;
+
+                      return (
+                        <div
+                          key={det.id || index}
+                          className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5"
                         >
-                          <Play className="w-3 h-3 fill-current" />
-                          <span>Play</span>
-                        </button>
-                      </div>
-                    ))}
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-semibold text-sm text-white">
+                                {det.start_timestamp_sec.toFixed(1)}s – {det.end_timestamp_sec.toFixed(1)}s
+                              </div>
+                              <div className="text-xs text-rose-400 mt-0.5">
+                                Rip Current Confidence: {(Math.min(0.985, det.confidence) * 100).toFixed(1)}%
+                              </div>
+                              {det.bounding_region?.corridor_id && (
+                                <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[11px] font-mono">
+                                  <span className="px-1.5 py-0.5 rounded bg-cyan-950/80 border border-cyan-800 text-cyan-300 font-bold">
+                                    Track: {det.bounding_region.corridor_id}
+                                  </span>
+                                  {det.bounding_region.drift_velocity && (
+                                    <span className="text-slate-400">
+                                      Drift: <span className="text-white font-semibold">{det.bounding_region.drift_velocity}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => jumpToTime(det.start_timestamp_sec)}
+                              className="px-2.5 py-1.5 rounded-lg bg-sky-500/15 text-sky-300 border border-sky-500/30 text-xs hover:bg-sky-500 hover:text-slate-950 transition-all font-semibold flex items-center space-x-1 shrink-0"
+                            >
+                              <Play className="w-3 h-3 fill-current" />
+                              <span>Play</span>
+                            </button>
+                          </div>
+
+                          {/* Existing feedback tags */}
+                          {detFeedback && detFeedback.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-900">
+                              {detFeedback.map((fb) => (
+                                <span
+                                  key={fb.id}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 ${
+                                    fb.feedback_type === 'confirmed_true_positive'
+                                      ? 'bg-emerald-950 border border-emerald-800 text-emerald-300'
+                                      : 'bg-amber-950 border border-amber-800 text-amber-300'
+                                  }`}
+                                >
+                                  {fb.feedback_type === 'confirmed_true_positive' ? '✓ Confirmed Rip' : `⚠ False Alarm (${fb.feedback_type.replace('false_positive_', '')})`}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Lifeguard verification buttons */}
+                          <div className="pt-2 border-t border-slate-900 flex items-center justify-between text-xs">
+                            <span className="text-[11px] text-slate-500">Lifeguard Validation:</span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleQuickConfirm(det.id)}
+                                disabled={feedbackSubmitting}
+                                title="Confirm this detection is a real rip current"
+                                className="px-2 py-1 rounded bg-slate-900 hover:bg-emerald-950 hover:text-emerald-300 text-slate-400 border border-slate-800 hover:border-emerald-700 transition-colors flex items-center gap-1 text-[11px]"
+                              >
+                                <ThumbsUp className="w-3 h-3" />
+                                <span>Confirm Rip</span>
+                              </button>
+                              <button
+                                onClick={() => setFeedbackOpenId(isFeedbackOpen ? null : det.id)}
+                                disabled={feedbackSubmitting}
+                                title="Flag false alarm (boat wake, sandbar, wave break)"
+                                className={`px-2 py-1 rounded border transition-colors flex items-center gap-1 text-[11px] ${
+                                  isFeedbackOpen
+                                    ? 'bg-amber-950 text-amber-300 border-amber-700'
+                                    : 'bg-slate-900 hover:bg-amber-950 hover:text-amber-300 text-slate-400 border-slate-800 hover:border-amber-700'
+                                }`}
+                              >
+                                <ThumbsDown className="w-3 h-3" />
+                                <span>Flag False Alarm</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Interactive feedback panel */}
+                          {isFeedbackOpen && (
+                            <div className="mt-2.5 p-3 rounded-lg bg-slate-900/90 border border-slate-800 space-y-2.5">
+                              <div className="text-[11px] font-semibold text-slate-300">
+                                False Alarm Cause (Hard Negative Mining):
+                              </div>
+                              <select
+                                value={feedbackType}
+                                onChange={(e) => setFeedbackType(e.target.value as FeedbackType)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                              >
+                                <option value="false_positive_wake">Boat / Jet Ski Wake Churn</option>
+                                <option value="false_positive_sandbar">Sandbar / Shallow Reef Shadow</option>
+                                <option value="false_positive_wave_break">Uniform Wave Break Turbulence</option>
+                                <option value="false_positive_other">Other False Positive</option>
+                              </select>
+                              <input
+                                type="text"
+                                placeholder="Operator notes (e.g., wake from fishing trawler at 12s)"
+                                value={operatorNotes}
+                                onChange={(e) => setOperatorNotes(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                              />
+                              <div className="flex justify-end gap-2 pt-1">
+                                <button
+                                  onClick={() => setFeedbackOpenId(null)}
+                                  className="px-2 py-1 rounded text-slate-400 hover:text-white text-xs"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => handleFeedbackSubmit(det.id)}
+                                  disabled={feedbackSubmitting}
+                                  className="px-3 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs transition-colors"
+                                >
+                                  {feedbackSubmitting ? 'Saving...' : 'Submit Feedback'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
+
             </div>
           </div>
         </div>

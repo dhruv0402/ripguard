@@ -141,45 +141,53 @@ def _mask_to_region(mask: np.ndarray, threshold: float = 0.5) -> dict | None:
 def _is_coastal_environment(first_few_frames: list[np.ndarray]) -> tuple[bool, str]:
     """
     Validates whether incoming video frames exhibit real coastal characteristics:
-    1. Fluid Surface Wave Dynamics: Ocean waves have high temporal pixel variance across frames,
-       whereas screen recordings, static slides, and indoor videos have near-zero temporal variance.
-    2. Natural Coastal Chrominance: Ocean water has distinct saturation/value distributions,
-       whereas dark UI themes and screen recordings lack natural daylight/water profiles.
+    1. Fluid Surface Wave Dynamics: Ocean waves exhibit continuous inter-frame fluid delta,
+       whereas static screen recordings, slides, and indoor videos have near-zero inter-frame delta.
+    2. Natural Coastal Chrominance: Ocean scenes feature characteristic water/cyan hues, breaking
+       surf foam, or sandy shoreline bands.
     """
     if not first_few_frames or len(first_few_frames) < 5:
         return False, "Insufficient video frames to verify coastal environment."
 
-    # 1. Test Fluid Wave Dynamics (Temporal Variance)
-    gray_frames = [cv2.resize(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), (256, 256)) for f in first_few_frames]
-    arr = np.array(gray_frames, dtype=np.float32)
-    temporal_variance = float(np.mean(np.var(arr, axis=0)))
+    # 1. Test Fluid Wave Dynamics (Inter-frame Motion Delta)
+    gray_frames = [cv2.resize(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), (128, 128)) for f in first_few_frames]
+    diffs = [
+        np.abs(gray_frames[i].astype(np.float32) - gray_frames[i - 1].astype(np.float32))
+        for i in range(1, len(gray_frames))
+    ]
+    mean_diff = float(np.mean(diffs))
 
-    # Real coastal surf has wave propagation variance > 10.0 (typically 50.0 - 250.0).
-    # Static screen recordings, UI meetings, or indoor cameras have variance < 3.0 (here 0.24).
-    if temporal_variance < 8.0:
-        return False, f"Static or non-fluid video detected (temporal motion variance: {temporal_variance:.2f} < 8.0 threshold). Please upload live beach or ocean surf footage."
+    # Real coastal surf has wave propagation inter-frame delta >= 0.35 (typically 0.70 - 9.0).
+    # Static screen recordings, UI meetings, or indoor cameras have delta < 0.25 (here 0.07).
+    if mean_diff < 0.35:
+        return False, f"Static or non-fluid video detected (mean motion delta: {mean_diff:.2f} < 0.35 threshold). Please upload live beach or ocean surf footage."
 
-    # 2. Test Natural Coastal Chrominance & Texture
-    coastal_ratios = []
+    # 2. Test Coastal Water, Whitewater Surf Foam, and Shoreline Palette
+    water_foam_ratios = []
+    coastal_palette_ratios = []
     for frame in first_few_frames:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
 
-        # Natural daylight water: H between 35 and 130, with healthy saturation (s >= 35) and natural brightness (v >= 40)
-        water_mask = (h >= 35) & (h <= 130) & (s >= 35) & (v >= 40)
-        # Whitewater breaking surf: bright reflective foam (v >= 190, s <= 75)
-        foam_mask = (v >= 190) & (s <= 75)
-        # Beach sand: warm yellow/golden tones (H 14-38, s >= 25, v >= 70)
-        sand_mask = (h >= 14) & (h <= 38) & (s >= 25) & (v >= 70)
+        # Ocean water: Blue/Cyan/Aquamarine (H 70-135, S > 20, V > 30)
+        water_mask = (h >= 70) & (h <= 135) & (s >= 20) & (v >= 30)
+        # Whitewater breaking surf foam: high value, low saturation
+        foam_mask = (v >= 180) & (s <= 65)
+        # Wet/dry beach sand: H 12-32, moderate saturation, natural daylight luminance
+        sand_mask = (h >= 12) & (h <= 32) & (s >= 25) & (s <= 180) & (v >= 65) & (v <= 230)
 
-        ratio = np.mean(water_mask | foam_mask | sand_mask)
-        coastal_ratios.append(ratio)
+        water_foam_ratios.append(float(np.mean(water_mask | foam_mask)))
+        coastal_palette_ratios.append(float(np.mean(water_mask | foam_mask | sand_mask)))
 
-    avg_coastal_ratio = float(np.mean(coastal_ratios))
-    if avg_coastal_ratio < 0.25:
-        return False, f"Non-coastal environment detected (natural coastal ratio: {avg_coastal_ratio:.1%}). Please upload coastal beach or surf surveillance footage."
+    avg_water_foam = float(np.mean(water_foam_ratios))
+    avg_palette = float(np.mean(coastal_palette_ratios))
+
+    # Coastal scenes require either discernible open water/surf foam (>= 4%) or broader coastal palette (>= 20%)
+    if avg_water_foam < 0.04 and avg_palette < 0.20:
+        return False, f"Non-coastal environment detected (water/foam: {avg_water_foam:.1%}, coastal palette: {avg_palette:.1%}). Please upload coastal beach or surf surveillance footage."
 
     return True, "Coastal environment verified"
+
 
 
 def run_inference_on_video(
@@ -430,7 +438,7 @@ def run_inference_on_video(
         # Fall back gracefully to original opencv output
         pass
 
-    detections = _merge_into_windows(smoothed_detections, gap_tolerance_sec=1.0)
+    detections = track_corridors_temporally(smoothed_detections, gap_tolerance_sec=1.2)
 
     return {
         "annotated_video_path": output_path,
@@ -439,31 +447,92 @@ def run_inference_on_video(
     }
 
 
-def _merge_into_windows(raw_detections: list[dict], gap_tolerance_sec: float) -> list[dict]:
-    """Merges consecutive high-confidence sampled frames into discrete
-    detection windows, rather than storing one row per sampled frame."""
+def bbox_iou(r1: dict, r2: dict) -> float:
+    x1 = max(r1["x"], r2["x"])
+    y1 = max(r1["y"], r2["y"])
+    x2 = min(r1["x"] + r1["w"], r2["x"] + r2["w"])
+    y2 = min(r1["y"] + r1["h"], r2["y"] + r2["h"])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    union = (r1["w"] * r1["h"]) + (r2["w"] * r2["h"]) - inter
+    return float(inter / max(union, 1e-6))
+
+
+def track_corridors_temporally(
+    raw_detections: list[dict],
+    gap_tolerance_sec: float = 1.2,
+    iou_threshold: float = 0.18,
+) -> list[dict]:
+    """
+    Temporal Corridor Tracker (TCT):
+    Associates detection regions across sequential sampled frames, tracks persistent
+    rip current corridor IDs (e.g. RC-1, RC-2), and computes seaward drift velocity.
+    """
     if not raw_detections:
         return []
 
     raw_detections.sort(key=lambda d: d["t"])
-    windows = []
-    current = {
-        "start": raw_detections[0]["t"],
-        "end": raw_detections[0]["t"],
-        "confidence": raw_detections[0]["confidence"],
-        "region": raw_detections[0]["region"],
-    }
+    active_tracks = []
+    track_counter = 1
 
-    for det in raw_detections[1:]:
-        if det["t"] - current["end"] <= gap_tolerance_sec:
-            current["end"] = det["t"]
-            current["confidence"] = max(current["confidence"], det["confidence"])
-        else:
-            windows.append(current)
-            current = {"start": det["t"], "end": det["t"], "confidence": det["confidence"], "region": det["region"]}
+    for det in raw_detections:
+        t = det["t"]
+        reg = det["region"]
+        conf = det["confidence"]
 
-    windows.append(current)
-    return windows
+        matched = False
+        for tr in active_tracks:
+            if t - tr["last_t"] <= gap_tolerance_sec:
+                iou = bbox_iou(tr["last_region"], reg)
+                cx1 = tr["last_region"]["x"] + tr["last_region"]["w"] / 2
+                cy1 = tr["last_region"]["y"] + tr["last_region"]["h"] / 2
+                cx2 = reg["x"] + reg["w"] / 2
+                cy2 = reg["y"] + reg["h"] / 2
+                dist = ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
+
+                if iou >= iou_threshold or dist <= 0.18:
+                    dt = max(t - tr["last_t"], 0.05)
+                    speed = dist / dt
+                    tr["last_t"] = t
+                    tr["end"] = t
+                    tr["last_region"] = reg
+                    tr["peak_confidence"] = max(tr["peak_confidence"], conf)
+                    tr["velocities"].append(speed)
+                    tr["hits"] += 1
+                    matched = True
+                    break
+
+        if not matched:
+            active_tracks.append({
+                "id": f"RC-{track_counter}",
+                "start": t,
+                "end": t,
+                "last_t": t,
+                "peak_confidence": conf,
+                "last_region": reg,
+                "velocities": [0.0],
+                "hits": 1,
+            })
+            track_counter += 1
+
+    results = []
+    for tr in active_tracks:
+        avg_speed = float(sum(tr["velocities"]) / max(len(tr["velocities"]), 1))
+        results.append({
+            "start": round(tr["start"], 2),
+            "end": round(tr["end"], 2),
+            "confidence": round(tr["peak_confidence"], 4),
+            "corridor_id": tr["id"],
+            "drift_velocity": round(avg_speed, 4),
+            "region": tr["last_region"],
+        })
+
+    return results
+
+
+def _merge_into_windows(raw_detections: list[dict], gap_tolerance_sec: float = 1.0) -> list[dict]:
+    """Backward-compatible alias pointing to track_corridors_temporally."""
+    return track_corridors_temporally(raw_detections, gap_tolerance_sec=gap_tolerance_sec)
+
 
 
 if __name__ == "__main__":

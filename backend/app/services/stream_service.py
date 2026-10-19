@@ -159,9 +159,58 @@ class LiveStreamManager:
             self.is_running = False
 
 
-# Global default stream manager (can be overridden with query param / video source)
+class MultiStreamRegistry:
+    """Thread-safe registry managing independent concurrent live camera/RTSP streams."""
+
+    def __init__(self):
+        self.streams: dict[str, LiveStreamManager] = {}
+        self.lock = asyncio.Lock()
+
+    def register_stream(self, stream_id: str, source: str | int | None = None) -> LiveStreamManager:
+        src = source if source is not None else stream_id
+        manager = LiveStreamManager(stream_source=src)
+        self.streams[stream_id] = manager
+        return manager
+
+    def get_stream(self, stream_id: str) -> LiveStreamManager | None:
+        return self.streams.get(stream_id)
+
+    def deregister_stream(self, stream_id: str):
+        manager = self.streams.pop(stream_id, None)
+        if manager and manager.is_running:
+            manager.stop()
+
+    def list_active_streams(self) -> list[str]:
+        return list(self.streams.keys())
+
+    async def get_or_create(self, source: str | None = None) -> LiveStreamManager:
+        src = source or (
+            "test_assets/beach_ripvis_072.mp4"
+            if os.path.exists("test_assets/beach_ripvis_072.mp4")
+            else "test_assets/active_rip_current.mp4"
+        )
+        async with self.lock:
+            if src not in self.streams:
+                self.streams[src] = LiveStreamManager(stream_source=src)
+            manager = self.streams[src]
+            if not manager.is_running:
+                await manager.start()
+            return manager
+
+    async def stop_all(self):
+        async with self.lock:
+            for manager in self.streams.values():
+                manager.stop()
+            self.streams.clear()
+
+
+
+stream_registry = MultiStreamRegistry()
+
+# Backwards-compatible default stream manager
 default_stream_manager = LiveStreamManager(
     stream_source="test_assets/beach_ripvis_072.mp4"
     if os.path.exists("test_assets/beach_ripvis_072.mp4")
     else "test_assets/active_rip_current.mp4"
 )
+

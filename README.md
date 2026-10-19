@@ -89,8 +89,10 @@ ripguard/
 ```bash
 # In Python 3.12 environment
 pip install -r backend/requirements.txt -r ml/requirements.txt
-# Run backend tests
-cd backend && pytest
+# Run database migrations
+cd backend && alembic upgrade head
+# Run backend tests (11 passing tests)
+pytest
 # Start FastAPI server
 uvicorn app.main:app --port 8000
 ```
@@ -99,8 +101,12 @@ uvicorn app.main:app --port 8000
 ```bash
 cd frontend
 npm install
+# Run frontend unit tests (5 passing tests)
+npm test
+# Run local dev server
 npm run dev
 # Visit http://localhost:3000
+
 ```
 
 ### 3. Docker Compose

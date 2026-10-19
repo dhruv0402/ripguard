@@ -7,7 +7,7 @@ table, since it's always read/written as a whole unit per session.
 import uuid
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey, Enum, Float, Text, JSON
+from sqlalchemy import String, DateTime, ForeignKey, Enum, Float, Text, JSON, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -25,6 +25,15 @@ class RiskLevel(str, enum.Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class FeedbackType(str, enum.Enum):
+    CONFIRMED_TRUE_POSITIVE = "confirmed_true_positive"
+    FALSE_POSITIVE_WAKE = "false_positive_wake"
+    FALSE_POSITIVE_SANDBAR = "false_positive_sandbar"
+    FALSE_POSITIVE_WAVE_BREAK = "false_positive_wave_break"
+    FALSE_POSITIVE_OTHER = "false_positive_other"
+    MISSED_DETECTION = "missed_detection"
 
 
 class AnalysisSession(Base):
@@ -49,6 +58,7 @@ class AnalysisSession(Base):
 
     owner: Mapped["User"] = relationship(back_populates="sessions")
     detections: Mapped[list["Detection"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+    feedback: Mapped[list["DetectionFeedback"]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
 class Detection(Base):
@@ -65,3 +75,24 @@ class Detection(Base):
     bounding_region: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     session: Mapped["AnalysisSession"] = relationship(back_populates="detections")
+    feedback: Mapped[list["DetectionFeedback"]] = relationship(back_populates="detection", cascade="all, delete-orphan")
+
+
+class DetectionFeedback(Base):
+    __tablename__ = "detection_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("analysis_sessions.id"), nullable=False)
+    detection_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("detections.id"), nullable=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    feedback_type: Mapped[FeedbackType] = mapped_column(Enum(FeedbackType), nullable=False)
+    confidence_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1 to 5 scale
+    operator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    corrected_region: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    session: Mapped["AnalysisSession"] = relationship(back_populates="feedback")
+    detection: Mapped["Detection | None"] = relationship(back_populates="feedback")
+    user: Mapped["User"] = relationship()
+

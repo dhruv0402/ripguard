@@ -77,3 +77,13 @@ async def test_session_endpoints(client: AsyncClient):
     detail_data = detail_res.json()
     assert detail_data["id"] == session_id
     assert "detections" in detail_data
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint(client: AsyncClient):
+    res = await client.get("/health")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["database"] == "healthy"
+    assert "model_checkpoint" in data
+

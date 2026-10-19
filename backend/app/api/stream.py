@@ -1,9 +1,32 @@
 import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+import os
+from urllib.parse import urlparse
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from app.services.stream_service import default_stream_manager, LiveStreamManager
+from app.services.stream_service import stream_registry, default_stream_manager, LiveStreamManager
+from app.api.deps import get_current_user, get_current_user_flexible
+from app.models.user import User
 
 router = APIRouter(prefix="/api/stream", tags=["stream"])
+
+
+def _validate_stream_source(source: str) -> str:
+    source_clean = source.strip()
+    if source_clean.isdigit():
+        return source_clean
+    if source_clean.startswith(("rtsp://", "http://", "https://")):
+        return source_clean
+
+    norm_path = os.path.normpath(source_clean)
+    if norm_path.startswith("test_assets" + os.sep) or norm_path == "test_assets":
+        if os.path.exists(norm_path) and os.path.isfile(norm_path):
+            return norm_path
+        raise HTTPException(status_code=404, detail=f"Test asset '{source_clean}' not found")
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid stream source. Allowed sources: RTSP/HTTP stream URLs, camera device numbers, or paths within test_assets/.",
+    )
 
 
 async def mjpeg_frame_generator(manager: LiveStreamManager):
@@ -18,15 +41,16 @@ async def mjpeg_frame_generator(manager: LiveStreamManager):
 
 
 @router.get("/feed")
-async def get_stream_feed(source: str | None = None):
+async def get_stream_feed(
+    source: str | None = None,
+    user: User = Depends(get_current_user_flexible),
+):
     """
     Returns an MJPEG stream suitable for direct rendering in an HTML <img> tag.
-    Optional ?source= parameter accepts RTSP URL or local video filepath.
+    Requires authentication via Bearer token or ?token= query parameter.
     """
-    manager = default_stream_manager
-    if source and source != manager.stream_source:
-        manager.stream_source = source
-    await manager.start()
+    valid_source = _validate_stream_source(source) if source else None
+    manager = await stream_registry.get_or_create(valid_source)
 
     return StreamingResponse(
         mjpeg_frame_generator(manager),
@@ -35,13 +59,19 @@ async def get_stream_feed(source: str | None = None):
 
 
 @router.get("/status")
-async def get_stream_status():
+async def get_stream_status(
+    source: str | None = None,
+    user: User = Depends(get_current_user),
+):
     """Returns current real-time detection telemetry (FPS, risk level, confidence)."""
-    return default_stream_manager.latest_meta
+    valid_source = _validate_stream_source(source) if source else None
+    manager = await stream_registry.get_or_create(valid_source)
+    return manager.latest_meta
+
 
 
 @router.get("/alerts")
-async def get_alerts_history():
+async def get_alerts_history(user: User = Depends(get_current_user)):
     """Returns the chronological audit log of triggered lifeguard alerts."""
     from app.services.alert_service import default_alert_dispatcher
     return {
@@ -51,8 +81,19 @@ async def get_alerts_history():
 
 
 @router.post("/alerts/webhook")
-async def register_alert_webhook(url: str = Query(..., description="Webhook endpoint URL")):
+async def register_alert_webhook(
+    url: str = Query(..., description="Webhook endpoint URL"),
+    user: User = Depends(get_current_user),
+):
     """Registers an external webhook (e.g., Slack, Twilio endpoint) to receive real-time alerts."""
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid webhook URL. Must begin with http:// or https:// and include a valid domain/host.",
+        )
+
     from app.services.alert_service import default_alert_dispatcher
-    default_alert_dispatcher.register_webhook(url)
-    return {"status": "registered", "url": url}
+    default_alert_dispatcher.register_webhook(url.strip())
+    return {"status": "registered", "url": url.strip()}
+

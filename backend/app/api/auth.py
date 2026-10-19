@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password, create_access_token
+from app.core.rate_limiter import rate_limit_auth
 from app.models.user import User
 from app.schemas.auth import UserCreate, UserOut, Token
 
@@ -25,7 +26,12 @@ async def signup(payload: UserCreate, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    _rate_check: None = Depends(rate_limit_auth),
+    db: AsyncSession = Depends(get_db),
+):
+
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
 

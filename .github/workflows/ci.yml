@@ -32,7 +32,8 @@ jobs:
 
       - name: Run backend tests
         run: |
-          DATABASE_URL="sqlite+aiosqlite:///backend/ripguard.db" pytest backend/tests/
+          PYTHONPATH=. DATABASE_URL="sqlite+aiosqlite:///backend/ripguard.db" pytest backend/tests/
+
 
   frontend-build:
     name: Frontend Vite & TypeScript Build
@@ -53,7 +54,13 @@ jobs:
           cd frontend
           npm ci
 
+      - name: Run frontend unit tests
+        run: |
+          cd frontend
+          npm test
+
       - name: Run TypeScript typecheck & production build
         run: |
           cd frontend
           npm run build
+
