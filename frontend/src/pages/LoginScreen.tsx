@@ -105,6 +105,38 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             {isSignup ? <UserPlus className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
             <span>{loading ? 'Authenticating...' : isSignup ? 'Sign Up' : 'Sign In'}</span>
           </button>
+
+          {!isSignup && (
+            <button
+              type="button"
+              onClick={async () => {
+                setEmail('operator@beachsafe.gov');
+                setPassword('passwordsafety123');
+                setLoading(true);
+                setError(null);
+                try {
+                  const formData = new URLSearchParams();
+                  formData.append('username', 'operator@beachsafe.gov');
+                  formData.append('password', 'passwordsafety123');
+                  const loginRes = await apiFetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: formData.toString(),
+                  });
+                  setAuthToken(loginRes.access_token);
+                  onLoginSuccess();
+                } catch (err: any) {
+                  setError(err.message || 'Auto-login failed');
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              className="w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs border border-slate-700 transition-colors flex items-center justify-center gap-2"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-sky-400" />
+              <span>1-Click Quick Demo Login (Operator)</span>
+            </button>
+          )}
         </form>
 
         <div className="mt-6 text-center text-xs text-slate-400">
