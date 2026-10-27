@@ -332,9 +332,9 @@ def run_inference_on_video(
                 if active_area_frac < 0.005 or region is None:
                     confidence = 0.08
                     region = None
-                elif region["w"] > 0.55 or (region["y"] <= 0.05 and region["w"] > 0.45):
-                    # Shoreline breaking wave foam spreads widely across the lateral horizon (w > 0.55)
-                    # Real rip channels are seaward corridors that are narrower laterally than onshore wave crests.
+                elif region["w"] > 0.45 or (region["y"] <= 0.12 and region["w"] > 0.35) or (region["w"] / max(0.01, region["h"]) > 1.35):
+                    # Shoreline breaking wave foam spreads widely across the lateral horizon (w/h > 1.35 or w > 0.45).
+                    # Real seaward rip channels are elongated offshore corridors (w/h <= 1.35 and w <= 0.45).
                     confidence = float(np.percentile(pred, 99) * 0.18)
                     pred = pred * 0.18
                     region = None
