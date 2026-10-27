@@ -327,7 +327,7 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
                     <video
                       key={session.annotated_video_path || session.id}
                       ref={videoRef}
-                      src={`${getVideoUrl(session.id)}?v=${encodeURIComponent(session.annotated_video_path || session.id)}`}
+                      src={getVideoUrl(session.id)}
                       controls
                       autoPlay
                       loop

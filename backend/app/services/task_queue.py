@@ -58,22 +58,80 @@ class BaseInferenceQueue(ABC):
 
 
 class InferenceJobQueue(BaseInferenceQueue):
-    def __init__(self, max_concurrent_workers: int = 2):
+    def __init__(self, max_concurrent_workers: int = 2, journal_path: str = "storage/queue_journal.jsonl"):
         self.max_workers = max_concurrent_workers
+        self.journal_path = journal_path
         self.queue: asyncio.Queue = asyncio.Queue()
         self.active_workers: list[asyncio.Task] = []
         self.job_registry: dict[str, dict[str, Any]] = {}
         self.is_running: bool = False
+        self._replay_registered_handlers: dict[str, Callable] = {}
+
+    def _persist_journal_entry(self, jid: str, status: JobStatus, error: Optional[str] = None):
+        """Appends status transition to disk journal for crash recovery."""
+        try:
+            import os
+            import json
+            import time
+            os.makedirs(os.path.dirname(os.path.abspath(self.journal_path)), exist_ok=True)
+            entry = {
+                "jid": jid,
+                "status": status.value,
+                "error": error,
+                "timestamp": time.time(),
+            }
+            with open(self.journal_path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            logger.warning("Failed to write queue journal entry for job %s: %s", jid, e)
+
+    def register_replay_handler(self, name: str, handler: Callable):
+        """Registers a named coroutine handler for crash recovery replay."""
+        self._replay_registered_handlers[name] = handler
+
+    async def recover_uncompleted_jobs(self):
+        """Scans journal on startup and marks or reschedules interrupted jobs."""
+        import os
+        import json
+        if not os.path.exists(self.journal_path):
+            return
+
+        latest_states: dict[str, dict] = {}
+        try:
+            with open(self.journal_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        data = json.loads(line)
+                        latest_states[data["jid"]] = data
+
+            recovered_count = 0
+            for jid, data in latest_states.items():
+                st = data.get("status")
+                if st in (JobStatus.QUEUED.value, JobStatus.PROCESSING.value):
+                    # Interrupted during crash/restart
+                    self.job_registry[jid] = {
+                        "status": JobStatus.FAILED,
+                        "error": "Worker process restarted while job was in-flight (crash recovered).",
+                        "queue_position": 0,
+                    }
+                    self._persist_journal_entry(jid, JobStatus.FAILED, error="Worker crashed during execution")
+                    recovered_count += 1
+            if recovered_count > 0:
+                logger.info("Recovered %d interrupted jobs from journal at %s", recovered_count, self.journal_path)
+        except Exception as e:
+            logger.error("Failed to recover jobs from journal: %s", e)
 
     async def start(self):
-        """Starts worker tasks in the background."""
+        """Starts worker tasks in the background and recovers pending journal jobs."""
         if self.is_running:
             return
         self.is_running = True
+        await self.recover_uncompleted_jobs()
         for i in range(self.max_workers):
             task = asyncio.create_task(self._worker_loop(worker_id=i + 1))
             self.active_workers.append(task)
-        logger.info("InferenceJobQueue initialized with %d workers", self.max_workers)
+        logger.info("InferenceJobQueue initialized with %d workers (journal: %s)", self.max_workers, self.journal_path)
 
     async def stop(self):
         """Gracefully drains and cancels active workers."""
@@ -89,13 +147,14 @@ class InferenceJobQueue(BaseInferenceQueue):
         *args,
         **kwargs,
     ) -> str:
-        """Enqueues an inference task and returns the job ID."""
+        """Enqueues an inference task, records to journal, and returns the job ID."""
         jid = str(job_id)
         self.job_registry[jid] = {
             "status": JobStatus.QUEUED,
             "error": None,
             "queue_position": self.queue.qsize() + 1,
         }
+        self._persist_journal_entry(jid, JobStatus.QUEUED)
         await self.queue.put((jid, handler, args, kwargs))
         logger.info("Job %s enqueued. Current queue depth: %d", jid, self.queue.qsize())
         return jid
@@ -120,18 +179,21 @@ class InferenceJobQueue(BaseInferenceQueue):
                 jid, handler, args, kwargs = await self.queue.get()
                 if jid in self.job_registry:
                     self.job_registry[jid]["status"] = JobStatus.PROCESSING
+                self._persist_journal_entry(jid, JobStatus.PROCESSING)
 
                 logger.info("Worker #%d started processing job %s", worker_id, jid)
                 try:
                     await handler(*args, **kwargs)
                     if jid in self.job_registry:
                         self.job_registry[jid]["status"] = JobStatus.COMPLETED
+                    self._persist_journal_entry(jid, JobStatus.COMPLETED)
                     logger.info("Worker #%d finished job %s successfully", worker_id, jid)
                 except Exception as exc:
                     logger.exception("Worker #%d encountered error on job %s: %s", worker_id, jid, exc)
                     if jid in self.job_registry:
                         self.job_registry[jid]["status"] = JobStatus.FAILED
                         self.job_registry[jid]["error"] = str(exc)
+                    self._persist_journal_entry(jid, JobStatus.FAILED, error=str(exc))
                 finally:
                     self.queue.task_done()
             except asyncio.CancelledError:

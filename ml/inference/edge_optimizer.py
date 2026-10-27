@@ -28,6 +28,7 @@ except ImportError:
     ort = None
 
 try:
+    # pyrefly: ignore[missing-import]
     import tensorrt as trt
 except ImportError:
     trt = None

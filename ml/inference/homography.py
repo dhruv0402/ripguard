@@ -245,6 +245,8 @@ class BeachCameraCalibrator:
                 "lateral_offset_m": round(lateral_offset, 1),
                 "direct_range_m": round(direct_range, 1),
                 "method": "planar_homography_4gcp",
+                "is_calibrated": True,
+                "calibration_warning": None,
                 "calibration_rmse_m": self.reprojection_rmse_m,
                 "effective_height_m": self.effective_height,
                 "tide_delta_m": round(self.active_tide_delta_m, 2),
@@ -268,6 +270,8 @@ class BeachCameraCalibrator:
             "lateral_offset_m": round(lateral_offset, 1),
             "direct_range_m": round(direct_range, 1),
             "method": "analytical_frustum",
+            "is_calibrated": False,
+            "calibration_warning": "UNCALIBRATED_ESTIMATE: Beach-specific RTK Ground Control Points (GCPs) missing; metric distances are analytical approximations.",
             "effective_height_m": self.effective_height,
             "tide_delta_m": round(self.active_tide_delta_m, 2),
         }

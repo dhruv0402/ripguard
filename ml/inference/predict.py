@@ -309,16 +309,20 @@ def run_inference_on_video(
                 pred = model.clean_mask(pred_raw, threshold=confidence_threshold_for_detection, min_area=400) if hasattr(model, 'clean_mask') else pred_raw
 
                 # Calculate optical flow vectors & hydrodynamic vorticity (shear)
+                # Compute on downsampled spatial grid (384x216) to prevent CPU starvation / GIL stalls
                 flow_vis = None
                 shear_p98 = 0.15
                 if prev_frame is not None:
-                    prev_gray = cv2.cvtColor(cv2.resize(prev_frame, (width, height)), cv2.COLOR_BGR2GRAY)
-                    curr_gray = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
-                    flow_vis = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+                    opt_w, opt_h = min(width, 384), min(height, 216)
+                    prev_gray_small = cv2.resize(cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY), (opt_w, opt_h))
+                    curr_gray_small = cv2.resize(cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY), (opt_w, opt_h))
+                    small_flow = cv2.calcOpticalFlowFarneback(prev_gray_small, curr_gray_small, None, 0.5, 3, 13, 3, 5, 1.2, 0)
+                    # Scale back to full resolution for visualization arrows
+                    flow_vis = cv2.resize(small_flow, (width, height)) * (width / opt_w)
                     
-                    # Compute 2D flow curl / shear (dvx/dy - dvy/dx)
-                    dvx_dy = np.gradient(flow_vis[..., 0], axis=0)
-                    dvy_dx = np.gradient(flow_vis[..., 1], axis=1)
+                    # Compute 2D flow curl / shear (dvx/dy - dvy/dx) on downsampled flow for max speed
+                    dvx_dy = np.gradient(small_flow[..., 0], axis=0)
+                    dvy_dx = np.gradient(small_flow[..., 1], axis=1)
                     vorticity = np.abs(dvx_dy - dvy_dx)
                     shear_p98 = float(np.percentile(vorticity, 98))
 
@@ -569,10 +573,14 @@ def track_corridors_temporally(
         offshore_dist = None
         gps_coords = None
         real_drift_velocity_str = f"{round(avg_speed, 2)} px/s"
+        is_calibrated = False
+        calib_warning = None
 
         if default_beach_calibrator is not None:
             metric_data = default_beach_calibrator.pixel_to_metric_distance(cx, cy)
             offshore_dist = metric_data["offshore_distance_m"]
+            is_calibrated = metric_data.get("is_calibrated", False)
+            calib_warning = metric_data.get("calibration_warning")
             lat, lon = default_beach_calibrator.metric_to_gps(
                 metric_data["offshore_distance_m"],
                 metric_data["lateral_offset_m"],
@@ -587,6 +595,8 @@ def track_corridors_temporally(
             "drift_velocity": real_drift_velocity_str,
             "offshore_distance_m": offshore_dist,
             "gps_coordinates": gps_coords,
+            "is_calibrated": is_calibrated,
+            "calibration_warning": calib_warning,
             "persistence_frames": tr["hits"],
             "tracking_status": "TRACKED" if tr["hits"] >= 2 else "EMERGING",
         }
@@ -599,6 +609,8 @@ def track_corridors_temporally(
             "drift_velocity": real_drift_velocity_str,
             "offshore_distance_m": offshore_dist,
             "gps_coordinates": gps_coords,
+            "is_calibrated": is_calibrated,
+            "calibration_warning": calib_warning,
             "region": enriched_region,
         })
 

@@ -89,10 +89,10 @@ ripguard/
 ```bash
 # In Python 3.12 environment
 pip install -r backend/requirements.txt -r ml/requirements.txt
-# Run database migrations
-cd backend && alembic upgrade head
-# Run backend tests (11 passing tests)
-pytest
+# Run backend tests (36 passing tests)
+pytest backend/tests
+# Run standalone ML pipeline tests (4 passing tests)
+pytest ml/tests
 # Start FastAPI server
 uvicorn app.main:app --port 8000
 ```
