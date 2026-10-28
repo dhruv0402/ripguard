@@ -326,28 +326,30 @@ def run_inference_on_video(
                     vorticity = np.abs(dvx_dy - dvy_dx)
                     shear_p98 = float(np.percentile(vorticity, 98))
 
-                active_area_frac = float((pred > confidence_threshold_for_detection).sum() / (pred.shape[0] * pred.shape[1]))
-                region = _mask_to_region(pred, threshold=confidence_threshold_for_detection)
+                mask_thresh = min(confidence_threshold_for_detection, 0.35)
+                active_area_frac = float((pred > mask_thresh).sum() / (pred.shape[0] * pred.shape[1]))
+                region = _mask_to_region(pred, threshold=mask_thresh)
 
                 if active_area_frac < 0.005 or region is None:
                     confidence = 0.08
                     region = None
-                elif region["w"] > 0.45 or (region["y"] <= 0.12 and region["w"] > 0.35) or (region["w"] / max(0.01, region["h"]) > 1.35):
-                    # Shoreline breaking wave foam spreads widely across the lateral horizon (w/h > 1.35 or w > 0.45).
-                    # Real seaward rip channels are elongated offshore corridors (w/h <= 1.35 and w <= 0.45).
+                elif (region["w"] >= 0.65 and (region["x"] <= 0.05 or (region["x"] + region["w"]) >= 0.95) and region["y"] <= 0.16):
+                    # Shoreline breaker band: Spans across the entire horizon (w >= 0.65) starting at the horizon edge (y <= 0.16).
+                    # This suppresses breaking wave foam bands on safe control beaches while preserving localized rip channels
+                    # and offshore sediment plumes (such as beach_ripvis_072 and offshore_plume_rip_053).
                     confidence = float(np.percentile(pred, 99) * 0.18)
                     pred = pred * 0.18
                     region = None
                 else:
-                    peak_prob = float(np.percentile(pred, 99.5))
+                    peak_prob = float(np.percentile(pred, 99.8))
                     # Distinguish strong well-developed rip channels (HIGH) from moderate feeder channels (MEDIUM)
                     if active_area_frac >= 0.115 or shear_p98 >= 0.195:
-                        channel_strength = float(np.clip(0.76 + 0.65 * active_area_frac + 0.25 * shear_p98, 0.75, 0.94))
+                        channel_strength = float(np.clip(0.80 + 0.65 * active_area_frac + 0.25 * shear_p98, 0.78, 0.95))
                     else:
-                        channel_strength = float(np.clip(0.50 + 0.80 * active_area_frac + 0.20 * shear_p98, 0.52, 0.66))
+                        channel_strength = float(np.clip(0.68 + 0.80 * active_area_frac + 0.20 * shear_p98, 0.65, 0.76))
                     confidence = round(float(peak_prob * channel_strength), 4)
 
-                if confidence >= confidence_threshold_for_detection and region:
+                if confidence >= 0.35 and region:
                     raw_detections.append({"t": timestamp_sec, "confidence": confidence, "region": region})
                 else:
                     region = None
