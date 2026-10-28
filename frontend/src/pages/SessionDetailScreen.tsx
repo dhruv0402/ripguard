@@ -197,7 +197,7 @@ export const SessionDetailScreen: React.FC<SessionDetailScreenProps> = ({ sessio
     ? duration
     : (timeline.length > 0 ? timeline[timeline.length - 1].t : 0);
 
-  const effectiveRisk = session.overall_risk_level || (maxConfidence >= 0.7 ? 'high' : maxConfidence >= 0.4 ? 'medium' : 'low');
+  const effectiveRisk = session.overall_risk_level || (maxConfidence >= 0.68 ? 'high' : maxConfidence >= 0.35 ? 'medium' : 'low');
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">

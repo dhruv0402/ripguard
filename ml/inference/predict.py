@@ -342,11 +342,16 @@ def run_inference_on_video(
                     region = None
                 else:
                     peak_prob = float(np.percentile(pred, 99.8))
-                    # Distinguish strong well-developed rip channels (HIGH) from moderate feeder channels (MEDIUM)
-                    if active_area_frac >= 0.115 or shear_p98 >= 0.195:
-                        channel_strength = float(np.clip(0.80 + 0.65 * active_area_frac + 0.25 * shear_p98, 0.78, 0.95))
+                    # Distinguish strong well-developed deep rip channels (HIGH >= 0.70)
+                    # from moderate feeder channels and offshore sediment plumes (MEDIUM: 0.50 - 0.65).
+                    # Strong cross-shore channels have vertical depth elongation (h >= 0.40) or high active area (>= 0.18).
+                    # Moderate distant feeder currents and plumes have aspect ratio >= 1.6 or h < 0.40.
+                    aspect_ratio = region["w"] / max(0.01, region["h"])
+                    is_deep_rip_corridor = (region["h"] >= 0.40 and active_area_frac >= 0.14) or (aspect_ratio <= 1.35 and shear_p98 >= 0.20)
+                    if is_deep_rip_corridor:
+                        channel_strength = float(np.clip(0.82 + 0.50 * active_area_frac + 0.25 * shear_p98, 0.80, 0.95))
                     else:
-                        channel_strength = float(np.clip(0.68 + 0.80 * active_area_frac + 0.20 * shear_p98, 0.65, 0.76))
+                        channel_strength = float(np.clip(0.55 + 0.35 * active_area_frac + 0.15 * shear_p98, 0.52, 0.64))
                     confidence = round(float(peak_prob * channel_strength), 4)
 
                 if confidence >= 0.35 and region:

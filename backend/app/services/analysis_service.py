@@ -20,8 +20,8 @@ from app.models.session import AnalysisSession, Detection, SessionStatus, RiskLe
 settings = get_settings()
 
 # Confidence thresholds for deriving an overall risk level from the timeline.
-HIGH_RISK_CONFIDENCE_THRESHOLD = 0.7
-MEDIUM_RISK_CONFIDENCE_THRESHOLD = 0.4
+HIGH_RISK_CONFIDENCE_THRESHOLD = 0.68
+MEDIUM_RISK_CONFIDENCE_THRESHOLD = 0.35
 
 # In-memory registry of active ingestion streams so the UI can display live
 # frame-by-frame detection on top of the ingested video while it processes.
