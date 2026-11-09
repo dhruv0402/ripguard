@@ -51,6 +51,14 @@ async def get_stream_feed(
     """
     valid_source = _validate_stream_source(source) if source else None
     manager = await stream_registry.get_or_create(valid_source)
+    if not manager.is_running:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": manager.latest_meta.get("error", "stream_unavailable"),
+                "message": "Live inference is unavailable. Configure a usable model checkpoint before retrying.",
+            },
+        )
 
     return StreamingResponse(
         mjpeg_frame_generator(manager),
@@ -338,21 +346,23 @@ async def get_hardware_edge_status(
     user: User = Depends(get_current_user),
 ):
     """
-    Returns edge hardware acceleration status, NVIDIA Jetson Orin compatibility,
-    TensorRT FP16 compilation status, and sub-20W power envelope certification.
+    Returns detected providers and measured host inference performance.
+    Deployment targets are not hardware certification or measured power.
     """
     if EdgeOptimizer is None:
         raise HTTPException(status_code=500, detail="EdgeOptimizer module not available.")
 
     optimizer = EdgeOptimizer()
     caps = optimizer.detect_edge_capabilities()
-    bench = optimizer.benchmark_edge_throughput(iterations=5, warmup=1)
+    bench = await asyncio.to_thread(optimizer.benchmark_edge_throughput, iterations=5, warmup=1)
 
     return {
-        "status": "operational",
+        "status": bench["status"].lower(),
         "target_node": "NVIDIA Jetson Orin Lifeguard Edge Node",
-        "power_mode": "Sub-20W (Jetson Orin 15W/20W Mode)",
-        "precision": "TensorRT FP16",
+        "power_mode": None,
+        "precision": None,
+        "target_precision": "TensorRT FP16",
+        "target_power_budget_w": 20.0,
         "target_fps": 30.0,
         "capabilities": caps,
         "benchmark": bench,

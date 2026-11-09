@@ -1,6 +1,6 @@
 # RipGuard — Rip Current Detection & Beach Safety Decision-Support System
 
-A full-stack system that analyzes beach video to flag likely rip current regions, built against the **RipVIS** dataset (CVPR 2025) and positioned against the live **NTIRE 2026 rip current detection/segmentation challenge** — a genuinely unsolved computer vision problem.
+A full-stack system that analyzes beach video to flag likely rip current regions, built against the **RipVIS** dataset (CVPR 2025) and related to the **NTIRE 2026 rip current detection/segmentation challenge**. This remains an open computer vision problem.
 
 **This is a research/decision-support prototype, not a certified safety system.** See `docs/PRD.md` for full scope and honest limitations.
 
@@ -66,17 +66,17 @@ ripguard/
 │   ├── training/       # dataset loader, train.py, evaluate.py
 │   ├── inference/      # predict.py — called by backend as a background task
 │   └── data/            # RipVIS dataset goes here (not committed to git)
-├── frontend/           # React/Next.js dashboard (scaffolded, not yet built out)
+├── frontend/           # React + Vite operator dashboard
 └── docker-compose.yml
 ```
 
 ## Status
-- ✅ Backend API (auth, session upload/polling, video streaming, benchmark endpoint) — built and tested (`pytest` passing 5/5 tests)
+- ✅ Backend API (auth, session upload/polling, video streaming, benchmark endpoint) — implemented; see the reproducible checks below
 - ✅ ML pipeline end-to-end (RipVIS dataset downloader/preparer, U-Net training on MPS/CUDA, evaluation, inference engine with browser-ready H.264 video encoding) — trained on real RipVIS CVPR 2025 data
 - ✅ Model trained & evaluated against RipVIS held-out test split (Mean IoU: 0.3211, Dice/F1: 0.4973, Precision: 0.4554, Recall: 0.5478 logged to `benchmark_runs`)
-- ✅ Dense Farnebäck optical flow (5-channel spatio-temporal input `[RGB + vx + vy]`) boosting active corridor recall ($0.3838$)
+- ✅ Dense Farnebäck optical flow (5-channel spatio-temporal input `[RGB + vx + vy]`) with reported recall 0.3838 on the expanded split (not a controlled comparison with v1)
 - ✅ Temporal Confidence Aggregation (TCA, $\alpha=0.65$) smoothing raw timeline curves to suppress transient foam spikes
-- ✅ Edge-ready ONNX Runtime inference engine with CoreML / CPU acceleration
+- ONNX Runtime inference support with available execution providers; Jetson FPS, power use, and field readiness are not established by host tests
 - ✅ Live coastal stream ingestion service (RTSP / USB webcam / video feed) with real-time MJPEG overlay and WebSocket telemetry
 - ✅ Frontend dashboard — 6 screens (Operator Login, Surveillance Dashboard, Video Upload, Session Detail with Interactive Risk Timeline & Disclaimer Banner, Benchmark Audit Trail, Live Camera Stream) built with React + Vite + Tailwind CSS
 - ✅ Failure mode & empirical analysis documented honestly in [`docs/RESULTS.md`](docs/RESULTS.md)
@@ -86,26 +86,33 @@ ripguard/
 ## Quickstart
 
 ### 1. Backend & ML Inference
+Run from the repository root using Python 3.12:
 ```bash
-# In Python 3.12 environment
+python -m venv .venv
+source .venv/bin/activate
 pip install -r backend/requirements.txt -r ml/requirements.txt
-# Run backend tests (36 passing tests)
-pytest backend/tests
-# Run standalone ML pipeline tests (4 passing tests)
-pytest ml/tests
-# Start FastAPI server
-uvicorn app.main:app --port 8000
+# Check backend behavior and standalone ML utilities without trained weights.
+PYTHONPATH=backend:. DATABASE_URL="sqlite+aiosqlite:///backend/ripguard.db" python -m pytest backend/tests ml/tests
+# Start the API with a local database.
+PYTHONPATH=backend:. DATABASE_URL="sqlite+aiosqlite:///backend/ripguard.db" uvicorn app.main:app --port 8000
 ```
+
+**Trained checkpoints and the RipVIS dataset are not included.** Configure
+`MODEL_CHECKPOINT_PATH` with a compatible trusted checkpoint before running real
+inference. Without a usable model, live status reports degraded/unknown risk and
+live video returns HTTP 503. A passing unit test suite is not a model-quality
+benchmark. See [`docs/VALIDATION.md`](docs/VALIDATION.md) for prerequisites and the
+limits of the evidence.
 
 ### 2. Frontend Application
 ```bash
 cd frontend
 npm install
-# Run frontend unit tests (5 passing tests)
+# Run frontend unit tests
 npm test
 # Run local dev server
 npm run dev
-# Visit http://localhost:3000
+# Open the local URL printed by Vite
 
 ```
 

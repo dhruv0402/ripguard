@@ -2,7 +2,8 @@ import pytest
 import numpy as np
 from httpx import AsyncClient
 from ml.inference.homography import BeachCameraCalibrator, GCPPoint
-from ml.inference.edge_optimizer import EdgeOptimizer, optimize_for_jetson_orin
+from ml.inference.edge_optimizer import EdgeOptimizer
+from app.api import stream as stream_api
 
 
 def test_4gcp_planar_homography_and_extrinsics_calibration():
@@ -68,48 +69,17 @@ def test_4gcp_calibration_insufficient_points_rejection():
         calibrator.calibrate_with_gcps(insufficient_gcps)
 
 
-def test_edge_optimizer_tensorrt_fp16_compilation_and_benchmark(tmp_path):
-    """
-    Validates EdgeOptimizer capabilities, ONNX -> TensorRT compilation manifest,
-    and sustained 30 FPS / sub-20W power envelope profiling.
-    """
-    onnx_checkpoint = "ml/checkpoints/ripguard_motion_unet_best.onnx"
-    out_engine = str(tmp_path / "test_ripguard_fp16.engine")
-
-    optimizer = EdgeOptimizer(
-        onnx_path=onnx_checkpoint,
-        engine_output_path=out_engine,
-        precision="FP16",
-        max_workspace_mb=1024,
-    )
-
-    # 1. Hardware capability detection
-    caps = optimizer.detect_edge_capabilities()
-    assert "NVIDIA Jetson Orin" in caps["target_architecture"]
-    assert "Sub-20W" in caps["target_power_profile"]
-    assert caps["target_fps"] == 30.0
-    assert caps["precision"] == "FP16"
-
-    # 2. Compilation
-    comp_res = optimizer.compile_onnx_to_tensorrt()
-    assert comp_res["status"] == "COMPILED"
-    assert comp_res["precision"] == "FP16"
-    assert comp_res["sub_20w_certified"] is True
-    assert comp_res["engine_path"] == out_engine
-
-    # 3. Latency & Throughput Benchmark
-    bench = optimizer.benchmark_edge_throughput(iterations=5, warmup=1)
-    assert "jetson_orin_fp16_profile" in bench
-    profile = bench["jetson_orin_fp16_profile"]
-    assert profile["sustained_fps"] >= 30.0
-    assert profile["power_consumption_w"] <= 20.0
-    assert profile["sub_20w_certified"] is True
-    assert profile["meets_30fps_target"] is True
-    assert bench["field_trial_ready"] is True
+def test_edge_optimizer_missing_checkpoint_is_not_certified(tmp_path):
+    optimizer = EdgeOptimizer(onnx_path=str(tmp_path / "missing.onnx"))
+    for result in (optimizer.compile_onnx_to_tensorrt(), optimizer.benchmark_edge_throughput()):
+        assert result["status"] == "UNAVAILABLE"
+        assert result["power_consumption_w"] is None
+        assert result["sub_20w_certified"] is False
+        assert result["field_trial_ready"] is False
 
 
 @pytest.mark.asyncio
-async def test_stream_calibration_and_hardware_endpoints(client: AsyncClient):
+async def test_stream_calibration_and_hardware_endpoints(client: AsyncClient, monkeypatch, tmp_path):
     """
     E2E integration test for /api/stream/calibration, /api/stream/calibration/project,
     and /api/stream/hardware endpoints.
@@ -179,16 +149,21 @@ async def test_stream_calibration_and_hardware_endpoints(client: AsyncClient):
     assert res_fail.status_code == 400
     assert "At least 4 Ground Control Points" in res_fail.json()["detail"]
 
-    # 5. GET hardware edge acceleration profile
+    # 5. Missing weights are visible, not a successful hardware certification.
+    monkeypatch.setattr(stream_api, "EdgeOptimizer", lambda: EdgeOptimizer(
+        onnx_path=str(tmp_path / "missing.onnx")
+    ))
     res_hw = await client.get("/api/stream/hardware", headers=headers)
     assert res_hw.status_code == 200
     hw_data = res_hw.json()
-    assert hw_data["status"] == "operational"
+    assert hw_data["status"] == "unavailable"
     assert "Jetson Orin" in hw_data["target_node"]
-    assert hw_data["precision"] == "TensorRT FP16"
+    assert hw_data["precision"] is None
+    assert hw_data["target_precision"] == "TensorRT FP16"
     assert hw_data["target_fps"] == 30.0
-    assert "Sub-20W" in hw_data["power_mode"]
-    assert hw_data["benchmark"]["field_trial_ready"] is True
+    assert hw_data["power_mode"] is None
+    assert hw_data["target_power_budget_w"] == 20.0
+    assert hw_data["benchmark"]["field_trial_ready"] is False
 
     # 6. DELETE calibration reset
     res_del = await client.delete("/api/stream/calibration?source=tower-1", headers=headers)

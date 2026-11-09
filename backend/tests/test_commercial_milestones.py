@@ -76,7 +76,12 @@ async def test_continuous_retraining_daemon():
 
 
 @pytest.mark.asyncio
-async def test_lifeguard_alert_dispatcher_escalation():
+async def test_lifeguard_alert_dispatcher_escalation(monkeypatch):
+    # This state-machine test must not send real network notifications.
+    async def no_network_delivery(self, payload):
+        pass
+
+    monkeypatch.setattr(AlertDispatcher, "_deliver_all_channels", no_network_delivery)
     dispatcher = AlertDispatcher(
         sustained_seconds_threshold=1.0,
         critical_escalation_seconds=3.0,
@@ -108,9 +113,15 @@ async def test_lifeguard_alert_dispatcher_escalation():
 
 
 @pytest.mark.asyncio
-async def test_stream_watchdog_state_machine():
-    # Test on valid asset
-    manager = LiveStreamManager(stream_source="test_assets/beach_ripvis_072.mp4")
+async def test_stream_watchdog_state_machine(monkeypatch):
+    # Isolate lifecycle control from trained weights and physical video capture.
+    async def capture_until_stopped(self):
+        while self.is_running:
+            await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(LiveStreamManager, "_init_model", lambda self: None)
+    monkeypatch.setattr(LiveStreamManager, "_capture_and_infer_loop", capture_until_stopped)
+    manager = LiveStreamManager(stream_source="test-camera")
     assert manager.stream_status == StreamStatus.INITIALIZING
     await manager.start()
     assert manager.is_running is True
@@ -122,6 +133,7 @@ async def test_stream_watchdog_state_machine():
     manager.stop()
     assert manager.stream_status == StreamStatus.OFFLINE
     assert manager.is_running is False
+    await asyncio.sleep(0.02)
 
 
 @pytest.mark.asyncio

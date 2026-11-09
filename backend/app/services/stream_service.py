@@ -7,6 +7,7 @@ and provides an async generator yielding JPEG frames for multipart MJPEG streami
 
 import asyncio
 import base64
+import logging
 import os
 import sys
 import time
@@ -20,6 +21,7 @@ from app.core.config import get_settings  # noqa: E402
 from app.services.alert_service import default_alert_dispatcher  # noqa: E402
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 from enum import Enum
@@ -54,8 +56,8 @@ class LiveStreamManager:
         self.latest_frame_jpeg: bytes | None = None
         self.latest_meta: dict = {
             "status": StreamStatus.INITIALIZING.value,
-            "confidence": 0.0,
-            "risk_level": "LOW",
+            "confidence": None,
+            "risk_level": "UNKNOWN",
             "fps": 0.0,
             "timestamp": time.time(),
             "reconnect_count": 0,
@@ -66,17 +68,42 @@ class LiveStreamManager:
         if self.model is None:
             self.model, self.in_channels = _load_model(self.checkpoint_path, self.device)
 
+    def _set_unavailable(self, status: StreamStatus, error: str | None = None):
+        """Invalidate cached observations whenever analysis stops being current."""
+        self.stream_status = status
+        self.latest_frame_jpeg = None
+        self.latest_meta = {
+            "status": status.value,
+            "confidence": None,
+            "risk_level": "UNKNOWN",
+            "fps": 0.0,
+            "timestamp": time.time(),
+            "reconnect_count": self.reconnect_count,
+        }
+        if error:
+            self.latest_meta["error"] = error
+        for queue in self.subscribers:
+            # Replace pending observations with the current availability state.
+            while not queue.empty():
+                queue.get_nowait()
+            queue.put_nowait(self.latest_meta)
+
     async def start(self):
         if self.is_running:
             return
-        self._init_model()
+        try:
+            self._init_model()
+        except Exception:
+            logger.exception("Unable to load live inference checkpoint")
+            self._set_unavailable(StreamStatus.DEGRADED, "model_unavailable")
+            return
         self.is_running = True
-        self.stream_status = StreamStatus.INITIALIZING
+        self._set_unavailable(StreamStatus.INITIALIZING)
         asyncio.create_task(self._capture_and_infer_loop())
 
     def stop(self):
         self.is_running = False
-        self.stream_status = StreamStatus.OFFLINE
+        self._set_unavailable(StreamStatus.OFFLINE)
 
 
     async def _capture_and_infer_loop(self):
@@ -99,8 +126,16 @@ class LiveStreamManager:
             while self.is_running:
                 # Open or re-open capture if not open
                 if cap is None or not cap.isOpened():
-                    self.stream_status = StreamStatus.INITIALIZING if self.reconnect_count == 0 else StreamStatus.RECONNECTING
-                    self.latest_meta["status"] = self.stream_status.value
+                    if cap is not None:
+                        cap.release()
+                        self.reconnect_count += 1
+                    prev_frame = None
+                    ema_confidence = 0.0
+                    if 'last_pred' in locals():
+                        del last_pred
+                    self._set_unavailable(
+                        StreamStatus.INITIALIZING if self.reconnect_count == 0 else StreamStatus.RECONNECTING
+                    )
                     cap = cv2.VideoCapture(source)
                     if not cap.isOpened():
                         self.reconnect_count += 1
@@ -120,9 +155,12 @@ class LiveStreamManager:
                         continue
                     else:
                         self.reconnect_count += 1
-                        self.stream_status = StreamStatus.RECONNECTING
-                        self.latest_meta["status"] = StreamStatus.RECONNECTING.value
-                        self.latest_meta["reconnect_count"] = self.reconnect_count
+                        self._set_unavailable(StreamStatus.RECONNECTING)
+                        prev_frame = None
+                        ema_confidence = 0.0
+                        # The first frame after reconnect must get fresh inference.
+                        if 'last_pred' in locals():
+                            del last_pred
                         if cap is not None:
                             cap.release()
                             cap = None
@@ -198,10 +236,15 @@ class LiveStreamManager:
                 # Yield control to event loop
                 await asyncio.sleep(0.02)
 
+        except Exception:
+            logger.exception("Live capture or inference failed")
+            self.model = None
+            self._set_unavailable(StreamStatus.DEGRADED, "inference_failed")
         finally:
             if cap is not None:
                 cap.release()
-            self.stream_status = StreamStatus.OFFLINE
+            if self.stream_status != StreamStatus.DEGRADED:
+                self._set_unavailable(StreamStatus.OFFLINE)
             self.is_running = False
 
 

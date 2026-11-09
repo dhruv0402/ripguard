@@ -17,9 +17,9 @@ import logging
 import os
 import shutil
 import subprocess
-import sys
 import time
-from typing import Dict, Any, Tuple, Optional, List
+import tempfile
+from typing import Dict, Any, Tuple, Optional
 import numpy as np
 
 try:
@@ -94,104 +94,87 @@ class EdgeOptimizer:
         self,
         force_recompile: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Compiles the ONNX checkpoint to a TensorRT FP16 engine.
-        Supports:
-          1. Direct compilation via native NVIDIA TensorRT Python API.
-          2. Compilation via `trtexec` CLI on Jetpack / Tegra.
-          3. Caching via ONNX Runtime TensorRT execution provider.
-          4. Cross-platform verification manifest for CI/host simulation.
-        """
-        if not os.path.exists(self.onnx_path):
-            raise FileNotFoundError(f"Source ONNX checkpoint not found: {self.onnx_path}")
+        """Compile with a real TensorRT backend; never substitute a placeholder.
 
-        os.makedirs(os.path.dirname(os.path.abspath(self.engine_path)), exist_ok=True)
+        Engines are rebuilt on every call (``force_recompile`` is retained for
+        caller compatibility). Existing files are not trusted as build evidence.
+        """
+        if not os.path.isfile(self.onnx_path):
+            return self._unavailable("Source ONNX checkpoint not found")
         caps = self.detect_edge_capabilities()
-        t0 = time.time()
-        compilation_method = "simulation_manifest"
-
-        # 1. Native TensorRT Python API Compilation
-        if caps["has_native_tensorrt"]:
-            try:
-                compilation_method = "native_tensorrt_api"
+        if not caps["has_native_tensorrt"] and not caps["has_trtexec_cli"]:
+            return self._unavailable("No native TensorRT compiler or trtexec available")
+        t0 = time.perf_counter()
+        temporary_path = None
+        method = "native_tensorrt_api" if caps["has_native_tensorrt"] else "trtexec_cli"
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(self.engine_path)), exist_ok=True)
+            # A failed build must not turn an old file into a successful result.
+            with tempfile.NamedTemporaryFile(
+                dir=os.path.dirname(os.path.abspath(self.engine_path)),
+                suffix=".engine", delete=False,
+            ) as temporary:
+                temporary_path = temporary.name
+            if caps["has_native_tensorrt"]:
                 trt_logger = trt.Logger(trt.Logger.INFO)
                 builder = trt.Builder(trt_logger)
-                network_flags = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
-                network = builder.create_network(network_flags)
+                flags = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+                network = builder.create_network(flags)
                 parser = trt.OnnxParser(network, trt_logger)
-
-                with open(self.onnx_path, "rb") as f:
-                    if not parser.parse(f.read()):
-                        errors = [parser.get_error(i).desc() for i in range(parser.num_errors)]
-                        raise RuntimeError(f"Failed to parse ONNX with TensorRT: {errors}")
-
+                with open(self.onnx_path, "rb") as source:
+                    if not parser.parse(source.read()):
+                        errors = [str(parser.get_error(i)) for i in range(parser.num_errors)]
+                        raise RuntimeError(f"TensorRT ONNX parsing failed: {errors}")
                 config = builder.create_builder_config()
                 config.set_memory_pool_limit(
                     trt.MemoryPoolType.WORKSPACE, self.max_workspace_mb * 1024 * 1024
                 )
-
                 if self.precision == "FP16":
                     config.set_flag(trt.BuilderFlag.FP16)
-
                 serialized_engine = builder.build_serialized_network(network, config)
                 if serialized_engine is None:
-                    raise RuntimeError("TensorRT failed to build serialized engine.")
+                    raise RuntimeError("TensorRT failed to build serialized engine")
+                with open(temporary_path, "wb") as output:
+                    output.write(serialized_engine)
+            else:
+                cmd = [
+                    shutil.which("trtexec") or "/usr/src/tensorrt/bin/trtexec",
+                    f"--onnx={self.onnx_path}", f"--saveEngine={temporary_path}",
+                    f"--memPoolSize=workspace:{self.max_workspace_mb}MiB",
+                ]
+                if self.precision == "FP16":
+                    cmd.append("--fp16")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                if result.returncode != 0:
+                    raise RuntimeError(f"trtexec failed: {result.stderr}")
+            if os.path.getsize(temporary_path) == 0:
+                raise RuntimeError("Compiler did not produce a nonempty engine")
+            os.replace(temporary_path, self.engine_path)
+            meta = {
+                "status": "COMPILED", "compilation_method": method,
+                "onnx_source": self.onnx_path, "engine_path": self.engine_path,
+                "precision": self.precision, "workspace_mb": self.max_workspace_mb,
+                "input_shape": list(self.input_shape), "target_fps": self.TARGET_FPS,
+                "power_consumption_w": None, "sub_20w_certified": False,
+                "field_trial_ready": False,
+                "compilation_time_sec": time.perf_counter() - t0,
+                "timestamp": time.time(),
+            }
+            with open(self.metadata_path, "w") as output:
+                json.dump(meta, output, indent=2)
+            return meta
+        except Exception as exc:
+            return self._unavailable(str(exc), status="FAILED", compilation_method=method)
+        finally:
+            if temporary_path and os.path.exists(temporary_path):
+                os.unlink(temporary_path)
 
-                with open(self.engine_path, "wb") as f:
-                    f.write(serialized_engine)
-
-            except Exception as e:
-                logger.warning(f"Native TensorRT API compilation error: {e}. Falling back...")
-                compilation_method = "fallback"
-
-        # 2. trtexec CLI Compilation (Standard on NVIDIA Jetpack)
-        elif caps["has_trtexec_cli"]:
-            compilation_method = "trtexec_cli"
-            trtexec_bin = shutil.which("trtexec") or "/usr/src/tensorrt/bin/trtexec"
-            shape_str = "x".join(str(d) for d in self.input_shape)
-            cmd = [
-                trtexec_bin,
-                f"--onnx={self.onnx_path}",
-                f"--saveEngine={self.engine_path}",
-                f"--memPoolSize=workspace:{self.max_workspace_mb}MiB",
-            ]
-            if self.precision == "FP16":
-                cmd.append("--fp16")
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                logger.warning(f"trtexec failed: {result.stderr}")
-                compilation_method = "fallback"
-
-        # 3. Development / Simulation / Cross-platform Profile Generation
-        if not os.path.exists(self.engine_path):
-            compilation_method = "cross_platform_edge_manifest"
-            # Write edge binary placeholder / descriptor for non-CUDA developer hosts
-            with open(self.engine_path, "wb") as f:
-                f.write(b"TRT_FP16_ORIN_ENGINE_COMPILED\n")
-
-        elapsed_sec = round(time.time() - t0, 2)
-
-        meta = {
-            "status": "COMPILED",
-            "compilation_method": compilation_method,
-            "onnx_source": self.onnx_path,
-            "engine_path": self.engine_path,
-            "precision": self.precision,
-            "target_hardware": "NVIDIA Jetson Orin (Ampere sm_87)",
-            "power_envelope_watts": 15.5,  # Measured Jetson Orin 15W mode
-            "sub_20w_certified": True,
-            "workspace_mb": self.max_workspace_mb,
-            "input_shape": list(self.input_shape),
-            "target_fps": self.TARGET_FPS,
-            "compilation_time_sec": elapsed_sec,
-            "timestamp": time.time(),
+    def _unavailable(self, reason: str, status: str = "UNAVAILABLE", **extra) -> Dict[str, Any]:
+        return {
+            "status": status, "reason": reason, "onnx_source": self.onnx_path,
+            "power_consumption_w": None, "sub_20w_certified": False,
+            "field_trial_ready": False, **extra,
         }
-
-        with open(self.metadata_path, "w") as f:
-            json.dump(meta, f, indent=2)
-
-        return meta
 
     def benchmark_edge_throughput(
         self,
@@ -202,8 +185,12 @@ class EdgeOptimizer:
         Profiles inference latency and sustained FPS for the model.
         Reports mean, median (p50), 95th percentile (p95), and sustained FPS.
         """
-        if not os.path.exists(self.onnx_path):
-            raise FileNotFoundError(f"ONNX model not found: {self.onnx_path}")
+        if not os.path.isfile(self.onnx_path):
+            return self._unavailable("ONNX model not found")
+        if ort is None:
+            return self._unavailable("ONNX Runtime is not installed")
+        if iterations <= 0 or warmup < 0:
+            return self._unavailable("iterations must be positive and warmup nonnegative", status="FAILED")
 
         providers = ["CPUExecutionProvider"]
         if ort:
@@ -218,20 +205,24 @@ class EdgeOptimizer:
             elif "CoreMLExecutionProvider" in available:
                 providers.insert(0, "CoreMLExecutionProvider")
 
-        dummy_input = np.random.randn(*self.input_shape).astype(np.float32)
+        try:
+            dummy_input = np.zeros(self.input_shape, dtype=np.float32)
 
-        session = ort.InferenceSession(self.onnx_path, providers=providers)
-        input_name = session.get_inputs()[0].name
+            session = ort.InferenceSession(self.onnx_path, providers=providers)
+            input_name = session.get_inputs()[0].name
 
-        # Warmup iterations
-        for _ in range(warmup):
-            session.run(None, {input_name: dummy_input})
+            # Warmup iterations
+            for _ in range(warmup):
+                session.run(None, {input_name: dummy_input})
 
-        latencies_ms = []
-        for _ in range(iterations):
-            t0 = time.perf_counter()
-            session.run(None, {input_name: dummy_input})
-            latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+            latencies_ms = []
+            for _ in range(iterations):
+                t0 = time.perf_counter()
+                session.run(None, {input_name: dummy_input})
+                latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+
+        except Exception as exc:
+            return self._unavailable(str(exc), status="FAILED")
 
         latencies_arr = np.array(latencies_ms)
         mean_lat = float(np.mean(latencies_arr))
@@ -240,38 +231,22 @@ class EdgeOptimizer:
         p99 = float(np.percentile(latencies_arr, 99))
         host_fps = round(1000.0 / max(mean_lat, 0.001), 1)
 
-        # On Jetson Orin with TensorRT FP16, Tensor Cores accelerate U-Net ~15x-20x over CPU:
-        # Jetson Orin Nano / NX sustained FP16 latency is ~24ms to 28ms (35-41 FPS) at ~14-18W.
-        projected_orin_fps = 36.5
-        projected_orin_latency_ms = 27.4
-        projected_power_watts = 15.2
-
-        active_provider = session.get_providers()[0]
-        is_hardware_accelerated = active_provider in ("TensorrtExecutionProvider", "CUDAExecutionProvider")
-        reported_fps = host_fps if is_hardware_accelerated else projected_orin_fps
-        reported_latency_ms = mean_lat if is_hardware_accelerated else projected_orin_latency_ms
-
-        meets_30fps = reported_fps >= self.TARGET_FPS
-
+        session_providers = session.get_providers()
         return {
-            "active_provider": active_provider,
+            "status": "BENCHMARKED",
+            # ORT provider order is preference, not per-node placement evidence.
+            "active_provider": session_providers[0],
+            "session_providers": session_providers,
+            "provider_note": "Session providers; individual nodes may use fallback providers",
             "host_measured_latency_ms": {
-                "mean": round(mean_lat, 2),
-                "p50": round(p50, 2),
-                "p95": round(p95, 2),
-                "p99": round(p99, 2),
+                "mean": mean_lat, "p50": p50, "p95": p95, "p99": p99,
             },
             "host_fps": host_fps,
-            "jetson_orin_fp16_profile": {
-                "architecture": "NVIDIA Jetson Orin (Ampere sm_87)",
-                "precision": "FP16 (Half-Precision Tensor Cores)",
-                "sustained_fps": reported_fps,
-                "latency_p50_ms": round(reported_latency_ms, 1),
-                "power_consumption_w": projected_power_watts,
-                "sub_20w_certified": bool(projected_power_watts <= self.TARGET_POWER_BUDGET_WATTS),
-                "meets_30fps_target": meets_30fps,
-            },
-            "field_trial_ready": meets_30fps,
+            "iterations": iterations, "warmup": warmup,
+            "meets_30fps_target": host_fps >= self.TARGET_FPS,
+            "power_consumption_w": None,
+            "sub_20w_certified": False,
+            "field_trial_ready": False,
         }
 
 

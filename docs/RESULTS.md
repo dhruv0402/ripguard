@@ -4,7 +4,7 @@
 
 Rip current segmentation from video is an **active, unsolved computer vision research problem** (the focal topic of CVPR 2025 RipVIS and the NTIRE 2026 challenge). In coastal environments, rip currents lack rigid boundaries, morph dynamically with breaking surf, and are easily confounded by whitewater foam, sandbars, and shifting surface illumination.
 
-RipGuard is designed as an honest decision-support tool. It does **not** claim to have solved rip current detection, nor does it present synthetic or inflated metrics. This document records the empirical results measured against the real CVPR 2025 **RipVIS** dataset.
+RipGuard is designed as an honest decision-support tool. It does **not** claim to have solved rip current detection. This document records previously reported results against the CVPR 2025 **RipVIS** dataset. The trained checkpoints and dataset are not committed, so these model-quality numbers are not reproduced by the unit tests. See [validation scope](VALIDATION.md).
 
 ---
 
@@ -27,7 +27,15 @@ Model architecture evaluated:
 
 ---
 
-## 3. Qualitative Failure Mode Analysis: What the Model Gets Right vs. Wrong
+## 3. Interpretation and reproducibility limits
+
+- v1 used 106 frames; v2 and v3 used 131. Comparing v1 to later versions does not isolate an architecture effect. Even the v2/v3 comparison requires frozen example IDs and matching preprocessing to establish a controlled result.
+- The current default checkpoint is named `ripguard_v4_deeplab_best.pt`. The table above does not contain a verified v4 result and should not be attributed to it.
+- Frame counts are not independent video counts. Correlated frames from a shared video/beach must not cross train/test boundaries; the checked-in table alone does not establish that separation.
+- The confidence values used by the UI are model scores, not calibrated probabilities of a hazardous current or proof a beach is safe.
+- No checked-in hardware artifact establishes 30 FPS, sub-20W power use, certification, or field readiness. Unit tests of a small generated ONNX model only verify software behavior.
+
+### Qualitative Failure Mode Analysis: What the Model Gets Right vs. Wrong
 
 Through inspecting video predictions and frame-level overlays, several distinct patterns emerge:
 
@@ -54,7 +62,7 @@ Through inspecting video predictions and frame-level overlays, several distinct 
 ## 4. Key Recommendations for Future Iterations
 
 1. **Temporal Context (Optical Flow / 3D CNN / Video Transformers):**
-   Incorporating sequential frame deltas (e.g., optical flow or multi-frame temporal attention windows) would allow the network to separate seaward flow from landward wave propagation, drastically reducing whitewater false alarms.
+   Incorporating sequential frame deltas (e.g., optical flow or multi-frame temporal attention windows) may help separate seaward flow from landward wave propagation. Any false-alarm reduction must be measured on a fixed held-out video set.
 2. **Temporal Confidence Aggregation (TCA):**
    Adopting the TCA post-processing method proposed in the CVPR 2025 RipVIS paper to enforce consistency across video timelines.
 3. **Ensemble & Higher-Capacity Encoders:**
